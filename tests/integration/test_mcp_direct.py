@@ -7,11 +7,13 @@ import asyncio
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 async def test_mcp_communication():
     """测试MCP通信"""
-    venv_python = "/home/jetgogoing/claude_memory/venv-claude-memory/bin/python"
-    script_path = "/home/jetgogoing/claude_memory/minimal_mcp_server.py"
+    project_root = Path(__file__).parent.parent.parent  # 回到项目根目录
+    venv_python = project_root / "venv-claude-memory" / "bin" / "python"
+    script_path = project_root / "fixed_production_mcp.py"
     
     # 启动MCP服务器进程
     proc = subprocess.Popen(

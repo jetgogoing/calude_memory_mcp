@@ -26,9 +26,9 @@ else
     echo "✅ Qdrant已在运行"
 fi
 
-# 部署MCP配置
+# 部署MCP配置 - 使用生产版本
 echo "🔧 配置MCP服务..."
-python deploy_simple.py
+python scripts/deploy/deploy_production.py
 
 echo ""
 echo "✨ 启动完成！"
