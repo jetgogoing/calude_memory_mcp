@@ -1,0 +1,75 @@
+{
+  "baseline_version": "1.4.0",
+  "measurement_date": "2024-01-06",
+  "test_environment": {
+    "cpu": "Intel i7-8700K 3.7GHz",
+    "memory": "16GB DDR4",
+    "storage": "SSD NVMe",
+    "python_version": "3.10.12",
+    "os": "Ubuntu 22.04"
+  },
+  "performance_baselines": {
+    "embedding_generation": {
+      "avg_duration_ms": 850,
+      "operations_per_second": 1.2,
+      "success_rate": 0.97,
+      "memory_usage_mb": 45,
+      "batch_size": 1
+    },
+    "semantic_retrieval": {
+      "avg_duration_ms": 95,
+      "operations_per_second": 8.5,
+      "success_rate": 0.99,
+      "memory_usage_mb": 25,
+      "result_count": 10
+    },
+    "conversation_compression": {
+      "avg_duration_ms": 3200,
+      "operations_per_second": 0.31,
+      "success_rate": 0.92,
+      "memory_usage_mb": 80,
+      "input_tokens": 500
+    },
+    "context_injection": {
+      "avg_duration_ms": 180,
+      "operations_per_second": 4.2,
+      "success_rate": 0.96,
+      "memory_usage_mb": 30,
+      "context_length": 2000
+    },
+    "end_to_end_workflow": {
+      "avg_duration_ms": 6500,
+      "operations_per_second": 0.15,
+      "success_rate": 0.88,
+      "memory_usage_mb": 150,
+      "total_pipeline_time": 6500
+    }
+  },
+  "performance_thresholds": {
+    "embedding_generation": {
+      "max_avg_duration_ms": 2000,
+      "min_ops_per_second": 0.5,
+      "min_success_rate": 0.95
+    },
+    "semantic_retrieval": {
+      "max_avg_duration_ms": 150,
+      "min_ops_per_second": 6.0,
+      "min_success_rate": 0.98
+    },
+    "conversation_compression": {
+      "max_avg_duration_ms": 5000,
+      "min_ops_per_second": 0.2,
+      "min_success_rate": 0.90
+    },
+    "context_injection": {
+      "max_avg_duration_ms": 300,
+      "min_ops_per_second": 3.0,
+      "min_success_rate": 0.95
+    },
+    "end_to_end_workflow": {
+      "max_avg_duration_ms": 8000,
+      "min_ops_per_second": 0.1,
+      "min_success_rate": 0.85
+    }
+  }
+}
