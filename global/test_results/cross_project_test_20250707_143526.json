@@ -1,0 +1,26 @@
+{
+  "test_time": "2025-07-07T14:35:26.980316",
+  "test_summary": {
+    "cross_project_search": 5,
+    "recent_conversations": 0,
+    "total_projects": 0,
+    "total_conversations": 0,
+    "total_messages": 0
+  },
+  "detailed_results": {
+    "search_results": {
+      "用户认证": [],
+      "数据库": [],
+      "Python": [],
+      "性能优化": [],
+      "React": []
+    },
+    "recent_conversations": [],
+    "stats": {
+      "conversation_count": 0,
+      "message_count": 0,
+      "project_count": 0,
+      "last_activity": null
+    }
+  }
+}

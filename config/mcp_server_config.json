@@ -1,0 +1,80 @@
+{
+  "claude-memory-mcp": {
+    "command": "python",
+    "args": [
+      "-m", "claude_memory.mcp_server"
+    ],
+    "env": {
+      "PYTHONPATH": "/home/jetgogoing/claude_memory/src"
+    },
+    "cwd": "/home/jetgogoing/claude_memory",
+    "description": "Claude记忆管理MCP服务",
+    "version": "0.1.0",
+    "author": "Claude Memory Team",
+    "capabilities": [
+      "memory_storage",
+      "semantic_search", 
+      "context_injection",
+      "conversation_tracking"
+    ],
+    "tools": [
+      {
+        "name": "store_memory",
+        "description": "存储对话记忆到长期记忆系统"
+      },
+      {
+        "name": "search_memories", 
+        "description": "基于语义相似度搜索相关记忆"
+      },
+      {
+        "name": "inject_context",
+        "description": "智能注入相关上下文到当前对话"
+      },
+      {
+        "name": "get_conversation_summary",
+        "description": "获取当前对话的智能摘要"
+      },
+      {
+        "name": "manage_memory_units",
+        "description": "管理记忆单元(创建、更新、删除)"
+      }
+    ],
+    "resources": [
+      {
+        "name": "memory_database",
+        "description": "记忆数据库访问"
+      },
+      {
+        "name": "conversation_history", 
+        "description": "对话历史记录"
+      }
+    ],
+    "settings": {
+      "max_memory_units": 10000,
+      "quick_mu_ttl_hours": 24,
+      "global_review_interval_hours": 168,
+      "compression_quality_threshold": 0.7,
+      "search_result_limit": 10,
+      "enable_auto_compression": true,
+      "enable_context_injection": true
+    },
+    "logging": {
+      "level": "INFO",
+      "format": "json",
+      "file": "logs/mcp_server.log",
+      "max_size": "10MB",
+      "backup_count": 5
+    },
+    "health_check": {
+      "enabled": true,
+      "interval_seconds": 30,
+      "timeout_seconds": 5,
+      "endpoint": "/health"
+    },
+    "metrics": {
+      "enabled": true,
+      "port": 8081,
+      "endpoint": "/metrics"
+    }
+  }
+}

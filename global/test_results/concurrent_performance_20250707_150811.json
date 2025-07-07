@@ -1,0 +1,165 @@
+{
+  "test_timestamp": "2025-07-07T15:08:11.433118",
+  "test_summary": {
+    "concurrent_search_qps": 136222.92952257226,
+    "search_success_rate": 1.0,
+    "avg_response_time_ms": 0.0029408931732177734,
+    "cache_speedup": 1.1356263982102908,
+    "mixed_workload_qps": 120.63569123898417,
+    "system_health": "healthy"
+  },
+  "detailed_results": {
+    "test_config": {
+      "database": {
+        "url": "sqlite:///test_concurrent_memory.db"
+      },
+      "vector_store": {
+        "url": "http://localhost:6333",
+        "collection_name": "test_memories",
+        "vector_size": 384
+      },
+      "concurrency": {
+        "max_connections": 20,
+        "cache_size": 2000,
+        "cache_ttl": 300.0,
+        "max_workers": 8
+      },
+      "memory": {
+        "cross_project_sharing": true,
+        "project_isolation": false,
+        "retention_days": 365
+      }
+    },
+    "data_setup": {
+      "num_conversations": 200
+    },
+    "concurrent_search": {
+      "total_queries": 200,
+      "successful_queries": 200,
+      "failed_queries": 0,
+      "success_rate": 1.0,
+      "total_time": 0.0014681816101074219,
+      "queries_per_second": 136222.92952257226,
+      "avg_duration": 2.9408931732177736e-06,
+      "median_duration": 2.6226043701171875e-06,
+      "min_duration": 2.384185791015625e-06,
+      "max_duration": 2.574920654296875e-05,
+      "avg_result_count": 9,
+      "errors": []
+    },
+    "mixed_workload": {
+      "search_requests": 2990,
+      "recent_requests": 750,
+      "total_requests": 3740,
+      "errors": 0,
+      "cache_hits": 0,
+      "cache_misses": 0,
+      "duration": 31.00243353843689,
+      "total_qps": 120.63569123898417,
+      "error_rate": 0.0
+    },
+    "cache_performance": {
+      "avg_uncached_time": 0.00038728713989257815,
+      "avg_cached_time": 0.000341033935546875,
+      "cache_speedup": 1.1356263982102908,
+      "first_round_times": [
+        0.0005629062652587891,
+        0.00035572052001953125,
+        0.00039005279541015625,
+        0.00031304359436035156,
+        0.0003147125244140625
+      ],
+      "second_round_times": [
+        0.0003552436828613281,
+        0.00032520294189453125,
+        0.0003681182861328125,
+        0.0003399848937988281,
+        0.000316619873046875
+      ]
+    },
+    "connection_pool": {
+      "5": {
+        "duration": 0.002064228057861328,
+        "success_count": 5,
+        "success_rate": 1.0,
+        "requests_per_second": 2422.2129822129823
+      },
+      "10": {
+        "duration": 0.00010895729064941406,
+        "success_count": 10,
+        "success_rate": 1.0,
+        "requests_per_second": 91779.08096280087
+      },
+      "20": {
+        "duration": 0.00015783309936523438,
+        "success_count": 20,
+        "success_rate": 1.0,
+        "requests_per_second": 126716.1329305136
+      },
+      "50": {
+        "duration": 0.00030303001403808594,
+        "success_count": 50,
+        "success_rate": 1.0,
+        "requests_per_second": 165000.15735641227
+      }
+    },
+    "system_stats": {
+      "concurrent_stats": {
+        "total_requests": 4236,
+        "concurrent_requests": 4166,
+        "max_concurrent": 4166,
+        "avg_response_time": 0.07263228130161982,
+        "error_count": 0
+      },
+      "cache_stats": {
+        "hits": 4166,
+        "misses": 64,
+        "evictions": 0,
+        "hit_rate": 0.984869976359338,
+        "cache_size": 22,
+        "max_size": 2000
+      },
+      "connection_pool": {
+        "total_connections": 3,
+        "max_connections": 20,
+        "queue_size": 3
+      },
+      "batch_queue_size": 0
+    },
+    "health_check": {
+      "status": "healthy",
+      "timestamp": "2025-07-07T15:08:11.432973",
+      "checks": {
+        "database": {
+          "status": "ok"
+        },
+        "cache": {
+          "status": "ok"
+        }
+      },
+      "performance": {
+        "concurrent_stats": {
+          "total_requests": 4236,
+          "concurrent_requests": 4166,
+          "max_concurrent": 4166,
+          "avg_response_time": 0.07263228130161982,
+          "error_count": 0
+        },
+        "cache_stats": {
+          "hits": 4167,
+          "misses": 64,
+          "evictions": 0,
+          "hit_rate": 0.9848735523516899,
+          "cache_size": 23,
+          "max_size": 2000
+        },
+        "connection_pool": {
+          "total_connections": 3,
+          "max_connections": 20,
+          "queue_size": 3
+        },
+        "batch_queue_size": 0
+      }
+    }
+  }
+}

@@ -1,0 +1,124 @@
+# Claude Memory MCP 全局配置
+# 此配置支持跨项目、跨环境部署
+
+# 数据存储配置
+database:
+  # 支持环境变量覆盖
+  url: "${DATABASE_URL:-sqlite:///app/data/global_memory.db}"
+  pool_size: 10
+  max_overflow: 20
+  pool_timeout: 30
+  pool_recycle: 3600
+  echo: false  # 生产环境关闭SQL日志
+
+# 向量数据库配置
+vector_store:
+  url: "${QDRANT_URL:-http://localhost:6333}"
+  collection_name: "claude_memory_global_vectors"
+  vector_size: 4096
+  distance: "Cosine"
+  timeout: 30
+  retry_attempts: 3
+
+# 全局记忆配置
+memory:
+  # 跨项目共享设置
+  cross_project_sharing: true
+  project_isolation: false  # 允许跨项目访问
+  retention_days: 365
+  max_conversations_per_project: 1000
+  max_messages_per_conversation: 500
+  
+  # 记忆压缩设置
+  compression:
+    enabled: true
+    threshold_messages: 100
+    compression_ratio: 0.3
+    
+  # 搜索设置
+  search:
+    default_limit: 10
+    max_limit: 50
+    min_similarity_score: 0.5
+    include_project_context: true
+
+# MCP服务配置
+mcp:
+  port: 6334
+  host: "0.0.0.0"
+  timeout: 30
+  max_connections: 100
+  
+  # 工具配置
+  tools:
+    memory_search:
+      enabled: true
+      description: "搜索全局对话记忆，支持跨项目访问"
+    memory_status:
+      enabled: true
+      description: "获取全局记忆系统状态"
+    memory_health:
+      enabled: true
+      description: "全局健康检查"
+    get_project_conversations:
+      enabled: true
+      description: "获取特定项目的对话历史"
+    get_cross_project_memories:
+      enabled: true
+      description: "获取跨项目相关记忆"
+
+# 日志配置
+logging:
+  level: "${LOG_LEVEL:-INFO}"
+  format: "json"
+  file: "/app/logs/global_mcp.log"
+  max_size: "100MB"
+  backup_count: 10
+  
+  # 组件日志级别
+  components:
+    mcp_server: INFO
+    memory_manager: INFO
+    database: WARNING
+    vector_store: INFO
+
+# 性能配置
+performance:
+  batch_size: 50
+  async_workers: 4
+  memory_cache_size: 1000
+  vector_cache_ttl: 3600
+
+# 安全配置
+security:
+  rate_limiting:
+    enabled: true
+    requests_per_minute: 100
+  
+  # 数据隐私
+  privacy:
+    anonymize_sensitive_data: false
+    encrypt_at_rest: false
+    retention_policy: "365d"
+
+# 项目上下文配置
+project_context:
+  auto_detect: true
+  include_path: true
+  include_git_info: true
+  max_path_depth: 3
+
+# 监控配置
+monitoring:
+  metrics_enabled: true
+  health_check_interval: 30
+  performance_tracking: true
+  error_reporting: true
+
+# 全局数据目录配置
+data_directories:
+  base: "${DATA_DIR:-/app/data}"
+  conversations: "${DATA_DIR:-/app/data}/conversations"
+  vectors: "${DATA_DIR:-/app/data}/vectors"
+  cache: "${DATA_DIR:-/app/data}/cache"
+  logs: "${DATA_DIR:-/app/data}/logs"

@@ -1,0 +1,40 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "/home/jetgogoing/claude_memory/config/claude_memory_alerts.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - localhost:9093
+
+scrape_configs:
+  # Claude Memory MCP服务器监控
+  - job_name: 'claude-memory-mcp'
+    static_configs:
+      - targets: ['localhost:8080']
+    scrape_interval: 10s
+    metrics_path: /metrics
+    scheme: http
+
+  # PostgreSQL监控 (需要postgres_exporter)
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['localhost:9187']
+    scrape_interval: 30s
+
+  # Qdrant监控
+  - job_name: 'qdrant'
+    static_configs:
+      - targets: ['localhost:6333']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # 系统监控 (需要node_exporter)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['localhost:9100']
+    scrape_interval: 30s

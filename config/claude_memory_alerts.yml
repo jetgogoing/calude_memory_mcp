@@ -1,0 +1,82 @@
+groups:
+  - name: claude_memory_alerts
+    rules:
+      # MCP服务器离线告警
+      - alert: ClaudeMemoryMCPDown
+        expr: up{job="claude-memory-mcp"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Claude Memory MCP服务器离线"
+          description: "Claude Memory MCP服务器已离线超过30秒"
+
+      # PostgreSQL离线告警
+      - alert: ClaudeMemoryPostgresDown
+        expr: claude_memory_postgres_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Claude Memory PostgreSQL服务离线"
+          description: "PostgreSQL数据库连接失败超过1分钟"
+
+      # Qdrant离线告警
+      - alert: ClaudeMemoryQdrantDown
+        expr: claude_memory_qdrant_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Claude Memory Qdrant服务离线"
+          description: "Qdrant向量数据库连接失败超过1分钟"
+
+      # 服务响应时间过长告警
+      - alert: ClaudeMemoryHighResponseTime
+        expr: claude_memory_avg_response_time_seconds > 5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Claude Memory响应时间过长"
+          description: "平均响应时间 {{ $value }}秒，超过5秒阈值"
+
+      # 服务重启告警
+      - alert: ClaudeMemoryServiceRestart
+        expr: increase(claude_memory_uptime_seconds[5m]) < 0
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Claude Memory服务重启"
+          description: "检测到Claude Memory服务重启"
+
+      # 长时间未健康检查告警
+      - alert: ClaudeMemoryNoHealthCheck
+        expr: (time() - claude_memory_last_health_check_timestamp) > 300
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Claude Memory健康检查异常"
+          description: "超过5分钟未进行健康检查"
+
+      # 请求量异常告警
+      - alert: ClaudeMemoryHighRequestRate
+        expr: rate(claude_memory_requests_total[5m]) > 10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Claude Memory请求量异常"
+          description: "5分钟内平均请求率 {{ $value }} req/sec，超过正常阈值"
+
+      # 请求量过低告警 (可能表示服务异常)
+      - alert: ClaudeMemoryLowRequestRate
+        expr: rate(claude_memory_requests_total[10m]) < 0.1 and claude_memory_uptime_seconds > 600
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: "Claude Memory请求量过低"
+          description: "10分钟内平均请求率 {{ $value }} req/sec，可能存在问题"

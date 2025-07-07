@@ -1,0 +1,17 @@
+{
+  "timestamp": "2025-07-07 04:03:02",
+  "postgresql": {
+    "status": "ok",
+    "message_count": 2,
+    "conversation_count": 2
+  },
+  "qdrant": {
+    "status": "ok",
+    "vector_count": 0
+  },
+  "mcp_server": {
+    "status": "error",
+    "error": "No MCP server processes found"
+  },
+  "overall_status": "error"
+}

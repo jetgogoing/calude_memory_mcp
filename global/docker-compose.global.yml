@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  # Claude Memory MCP 全局服务
+  claude-memory-global:
+    build:
+      context: .
+      dockerfile: Dockerfile.global
+    container_name: claude-memory-global
+    ports:
+      - "6334:6334"  # 标准化MCP端口
+    environment:
+      - DATABASE_URL=sqlite:///app/data/global_memory.db
+      - QDRANT_URL=http://qdrant-global:6333
+      - DATA_DIR=/app/data
+      - LOG_LEVEL=INFO
+      - MCP_PORT=6334
+      - PYTHONPATH=/app/src
+    volumes:
+      - ~/.claude-memory/data:/app/data
+      - ~/.claude-memory/logs:/app/logs
+      - ~/.claude-memory/config:/app/config
+      # 挂载用户目录用于数据库发现和迁移
+      - ~/:/host-home:ro
+    depends_on:
+      qdrant-global:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - claude-memory-global-network
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    command: >
+      sh -c "
+        echo '初始化全局数据库...';
+        python /app/scripts/init_global_database.py --auto-migrate --search-paths /host-home --log-level INFO || echo '数据库初始化完成或跳过';
+        echo '启动全局MCP服务器...';
+        python /app/global_mcp_server.py
+      "
+
+
+  # Qdrant 全局向量数据库
+  qdrant-global:
+    image: qdrant/qdrant:v1.7.4
+    container_name: claude-memory-qdrant-global
+    ports:
+      - "6335:6333"  # 避免端口冲突
+    volumes:
+      - ~/.claude-memory/qdrant:/qdrant/storage
+      - ./config/qdrant_global.yaml:/qdrant/config/production.yaml
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__LOG_LEVEL=INFO
+      - QDRANT__STORAGE__COLLECTION_DEFAULT_SHARD_NUMBER=1
+    restart: unless-stopped
+    networks:
+      - claude-memory-global-network
+
+volumes:
+  # 使用外部目录，确保数据持久化
+  claude_memory_global_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${HOME}/.claude-memory
+
+networks:
+  claude-memory-global-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+
+# 全局配置注释
+# 该配置文件设计用于全局部署，支持：
+# 1. 跨项目记忆共享
+# 2. 用户级数据存储 (~/.claude-memory/)
+# 3. 标准化端口避免冲突
+# 4. 健康检查和自动重启
+# 5. 独立的网络命名空间
