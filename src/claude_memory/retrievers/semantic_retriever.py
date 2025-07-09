@@ -16,13 +16,13 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import structlog
 from pydantic import BaseModel, Field
-from qdrant_client import QdrantClient
+from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as qdrant_models
 from qdrant_client.http.exceptions import ResponseHandlingException
 from sqlalchemy import and_, desc, func, or_
 from claude_memory.database.session_manager import get_db_session
 from claude_memory.models.data_models import (
-    EmbeddingModel,
+    EmbeddingDB,
     MemoryUnitModel,
     MemoryUnitType,
     SearchQuery,
@@ -45,8 +45,9 @@ class RetrievalRequest(BaseModel):
     """检索请求模型"""
     
     query: SearchQuery
-    limit: int = Field(default=10, ge=1, le=100)
-    min_score: float = Field(default=0.5, ge=0.0, le=1.0)
+    # project_id: str = Field(default="default", description="项目ID")  # 已删除：全局共享记忆
+    limit: int = Field(default=10, ge=1, le=999999)  # 移除上限限制
+    min_score: float = Field(default=0.3, ge=0.0, le=1.0)
     include_expired: bool = False
     unit_types: Optional[List[MemoryUnitType]] = None
     rerank: bool = True
@@ -81,18 +82,23 @@ class SemanticRetriever:
         self.settings = get_settings()
         self.text_processor = TextProcessor()
         
+        # 初始化模型管理器
+        from claude_memory.utils.model_manager import ModelManager
+        self.model_manager = ModelManager()
+        
         # 初始化Qdrant客户端
         # 从qdrant_url解析host和port
         url_parts = self.settings.qdrant.qdrant_url.replace("http://", "").replace("https://", "").split(":")
         host = url_parts[0]
         port = int(url_parts[1]) if len(url_parts) > 1 else 6333
         
-        self.qdrant_client = QdrantClient(
+        self.qdrant_client = AsyncQdrantClient(
             host=host,
             port=port,
             api_key=self.settings.qdrant.api_key,
             timeout=self.settings.qdrant.timeout,
-            https=False  # 禁用SSL，使用HTTP连接
+            https=False,  # 禁用SSL，使用HTTP连接
+            check_compatibility=False  # 禁用版本兼容性检查
         )
         
         # 集合名称
@@ -132,14 +138,14 @@ class SemanticRetriever:
         """
         try:
             # 检查集合是否存在
-            collections = self.qdrant_client.get_collections()
+            collections = await self.qdrant_client.get_collections()
             collection_exists = any(
                 col.name == self.collection_name for col in collections.collections
             )
             
             if not collection_exists:
                 # 创建集合
-                self.qdrant_client.create_collection(
+                await self.qdrant_client.create_collection(
                     collection_name=self.collection_name,
                     vectors_config=qdrant_models.VectorParams(
                         size=self.settings.qdrant.vector_size,
@@ -167,7 +173,6 @@ class SemanticRetriever:
             raise ProcessingError(f"Collection initialization failed: {str(e)}")
 
     @handle_exceptions(logger=logger, reraise=True)
-    @with_retry(max_attempts=3)
     async def store_memory_unit(self, memory_unit: MemoryUnitModel) -> bool:
         """
         存储记忆单元到向量数据库
@@ -187,13 +192,15 @@ class SemanticRetriever:
             # 构建元数据
             metadata = {
                 'id': str(memory_unit.id),
+                'memory_unit_id': str(memory_unit.id),  # 添加memory_unit_id
+                # 'project_id': memory_unit.project_id,    # 已删除：全局共享记忆
                 'conversation_id': str(memory_unit.conversation_id),
                 'unit_type': memory_unit.unit_type.value,
                 'title': memory_unit.title,
                 'keywords': memory_unit.keywords,
                 'token_count': memory_unit.token_count,
-                'created_at': memory_unit.created_at.isoformat(),
-                'expires_at': memory_unit.expires_at.isoformat() if memory_unit.expires_at else None,
+                'created_at': memory_unit.created_at.timestamp(),
+                'expires_at': memory_unit.expires_at.timestamp() if memory_unit.expires_at else None,
                 'importance_score': memory_unit.metadata.get('importance_score', 0.5),
                 'quality_score': memory_unit.metadata.get('quality_score', 0.5),
             }
@@ -211,16 +218,44 @@ class SemanticRetriever:
             )
             
             # 同时存储嵌入记录到数据库
-            embedding_record = EmbeddingModel(
-                memory_unit_id=memory_unit.id,
-                embedding_vector=embedding_vector.tolist(),
-                model_name=self.settings.models.embedding_model,
-                vector_dimension=len(embedding_vector),
-                metadata={'storage_timestamp': datetime.utcnow().isoformat()}
-            )
-            
-            self.db_session.add(embedding_record)
-            await self.db_session.commit()
+            logger.debug("Starting database storage for embedding")
+            try:
+                async with get_db_session() as session:
+                    logger.debug("Database session obtained")
+                    embedding_record = EmbeddingDB(
+                        memory_unit_id=memory_unit.id,
+                        vector=embedding_vector.tolist(),
+                        model_name=self.settings.models.default_embedding_model,
+                        dimension=len(embedding_vector)
+                    )
+                    logger.debug("EmbeddingDB record created")
+                    
+                    # 直接添加到会话，不保存返回值
+                    session.add(embedding_record)
+                    logger.debug("Record added to session")
+                    # 提交事务 - 注意：commit()不返回任何值，所以不应该保存或等待它的结果
+                    await session.commit()
+                    logger.debug("Transaction committed successfully")
+            except Exception as db_error:
+                # 捕获数据库特定错误并提供更详细的信息
+                logger.error(f"Database operation failed: {db_error}")
+                logger.error(f"DB error type: {type(db_error)}")
+                # 外键约束错误不应该被忽略，这表示数据不一致
+                if "foreign key constraint" in str(db_error).lower():
+                    logger.error("Foreign key constraint violation - memory unit must be saved to database first")
+                    # 回滚向量存储以保持数据一致性
+                    try:
+                        await self.qdrant_client.delete(
+                            collection_name=self.collection_name,
+                            points_selector=qdrant_models.PointIdsList(
+                                points=[str(memory_unit.id)]
+                            )
+                        )
+                        logger.info("Rolled back vector storage due to database constraint violation")
+                    except Exception as rollback_error:
+                        logger.error(f"Failed to rollback vector storage: {rollback_error}")
+                    return False
+                raise
             
             logger.info(
                 "Memory unit stored successfully",
@@ -232,12 +267,11 @@ class SemanticRetriever:
             return True
             
         except Exception as e:
-            logger.error(
-                "Failed to store memory unit",
-                memory_unit_id=str(memory_unit.id),
-                error=str(e)
-            )
-            await self.db_session.rollback()
+            import traceback
+            logger.error(f"Failed to store memory unit {memory_unit.id}: {e}")
+            logger.error(f"Error type: {type(e)}")
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
+            # 错误已在session上下文管理器中处理
             raise ProcessingError(f"Storage failed: {str(e)}")
 
     @handle_exceptions(logger=logger, default_return=RetrievalResult(results=[], total_found=0, search_time_ms=0.0, retrieval_strategy="error"))
@@ -460,37 +494,45 @@ class SemanticRetriever:
             return []
         
         # 构建数据库查询
-        query = self.db_session.query(MemoryUnitModel)
-        
-        # 关键词匹配条件
-        keyword_conditions = []
-        for keyword in query_keywords:
-            keyword_conditions.append(
-                MemoryUnitModel.keywords.contains([keyword])
-            )
-        
-        # 应用关键词过滤
-        if keyword_conditions:
-            query = query.filter(or_(*keyword_conditions))
-        
-        # 应用类型过滤
-        if request.unit_types:
-            query = query.filter(MemoryUnitModel.unit_type.in_(request.unit_types))
-        
-        # 排除过期记忆
-        if not request.include_expired:
-            query = query.filter(
-                or_(
-                    MemoryUnitModel.expires_at.is_(None),
-                    MemoryUnitModel.expires_at > datetime.utcnow()
+        async with get_db_session() as session:
+            from sqlalchemy import select
+            from claude_memory.models.data_models import MemoryUnitDB
+            query = select(MemoryUnitDB)
+            
+            # 项目ID过滤 - 始终添加
+            # query = query.filter(MemoryUnitDB.project_id == request.project_id)  # 已删除：全局共享记忆
+            
+            # 关键词匹配条件 - 修复JSON查询问题
+            keyword_conditions = []
+            for keyword in query_keywords:
+                # 使用JSON操作符查询keywords数组
+                keyword_conditions.append(
+                    MemoryUnitDB.keywords.op('@>')([keyword])
                 )
-            )
-        
-        # 按创建时间降序排列
-        query = query.order_by(desc(MemoryUnitModel.created_at))
-        
-        # 限制结果数量
-        memory_units = await query.limit(request.limit * 2).all()
+            
+            # 应用关键词过滤
+            if keyword_conditions:
+                query = query.filter(or_(*keyword_conditions))
+            
+            # 应用类型过滤
+            if request.unit_types:
+                query = query.filter(MemoryUnitDB.unit_type.in_(request.unit_types))
+            
+            # 排除过期记忆
+            if not request.include_expired:
+                query = query.filter(
+                    or_(
+                        MemoryUnitDB.expires_at.is_(None),
+                        MemoryUnitDB.expires_at > datetime.utcnow()
+                    )
+                )
+            
+            # 按创建时间降序排列
+            query = query.order_by(desc(MemoryUnitDB.created_at))
+            
+            # 限制结果数量
+            result = await session.execute(query.limit(request.limit * 2))
+            memory_units = result.scalars().all()
         
         # 计算关键词匹配分数
         results = []
@@ -514,8 +556,24 @@ class SemanticRetriever:
             relevance_score = min(1.0, match_score / len(query_keywords))
             
             if relevance_score >= request.min_score * 0.5:  # 较低的阈值用于关键词匹配
+                # 转换MemoryUnitDB为MemoryUnitModel
+                memory_unit_model = MemoryUnitModel(
+                    memory_id=str(memory_unit.id),
+                    # project_id=memory_unit.project_id,  # 已删除：全局共享记忆
+                    conversation_id=str(memory_unit.conversation_id),
+                    unit_type=memory_unit.unit_type,
+                    title=memory_unit.title,
+                    summary=memory_unit.summary,
+                    content=memory_unit.content,
+                    keywords=memory_unit.keywords,
+                    token_count=memory_unit.token_count,
+                    created_at=memory_unit.created_at,
+                    expires_at=memory_unit.expires_at,
+                    metadata=memory_unit.metadata
+                )
+                
                 result = SearchResult(
-                    memory_unit=memory_unit,
+                    memory_unit=memory_unit_model,
                     relevance_score=relevance_score,
                     match_type='keyword',
                     matched_keywords=matched_keywords,
@@ -573,14 +631,8 @@ class SemanticRetriever:
             ]
             
             # 调用ModelManager的重排序API
-            from ..utils.model_manager import ModelManager
-            
-            # 这里应该注入ModelManager，暂时创建临时实例
-            model_manager = ModelManager()
-            await model_manager.initialize()
-            
             try:
-                rerank_response = await model_manager.rerank_documents(
+                rerank_response = await self.model_manager.rerank_documents(
                     model=self.settings.models.default_rerank_model,  # qwen3-reranker-8b
                     query=query.query,
                     documents=documents,
@@ -705,8 +757,8 @@ class SemanticRetriever:
         """
         # 类型优先级权重
         type_weights = {
-            MemoryUnitType.GLOBAL_MU: 1.0,
-            MemoryUnitType.QUICK_MU: 0.8,
+            MemoryUnitType.DOCUMENTATION: 1.0,
+            MemoryUnitType.CONVERSATION: 0.8,
             MemoryUnitType.ARCHIVE: 0.6,
         }
         
@@ -740,41 +792,32 @@ class SemanticRetriever:
         
         try:
             # v1.4: 使用Qwen3-Embedding-8B生成真实的4096维嵌入
-            from ..utils.model_manager import ModelManager
+            embedding_response = await self.model_manager.generate_embedding(
+                model=self.settings.models.default_embedding_model,  # qwen3-embedding-8b
+                text=clean_text
+            )
             
-            model_manager = ModelManager()
-            await model_manager.initialize()
+            embedding_vector = np.array(embedding_response.embedding, dtype=np.float32)
             
-            try:
-                embedding_response = await model_manager.generate_embedding(
-                    model=self.settings.models.default_embedding_model,  # qwen3-embedding-8b
-                    text=clean_text
+            # 验证向量维度
+            expected_dim = self.settings.qdrant.vector_size  # 4096
+            if len(embedding_vector) != expected_dim:
+                raise ValueError(
+                    f"Embedding dimension mismatch: expected {expected_dim}, got {len(embedding_vector)}"
                 )
-                
-                embedding_vector = np.array(embedding_response.embedding, dtype=np.float32)
-                
-                # 验证向量维度
-                expected_dim = self.settings.qdrant.vector_size  # 4096
-                if len(embedding_vector) != expected_dim:
-                    raise ValueError(
-                        f"Embedding dimension mismatch: expected {expected_dim}, got {len(embedding_vector)}"
-                    )
-                
-                logger.debug(
-                    "Qwen3 embedding generated",
-                    text_length=len(clean_text),
-                    model=embedding_response.model,
-                    dimension=embedding_response.dimension,
-                    cost=embedding_response.cost_usd
-                )
-                
-                # 缓存结果
-                await self._cache_embedding(text_hash, embedding_vector)
-                
-                return embedding_vector
-                
-            finally:
-                await model_manager.close()
+            
+            logger.debug(
+                "Qwen3 embedding generated",
+                text_length=len(clean_text),
+                model=embedding_response.model,
+                dimension=embedding_response.dimension,
+                cost=embedding_response.cost_usd
+            )
+            
+            # 缓存结果
+            await self._cache_embedding(text_hash, embedding_vector)
+            
+            return embedding_vector
                 
         except Exception as e:
             logger.error(
@@ -805,6 +848,15 @@ class SemanticRetriever:
         """
         conditions = []
         
+        # 项目ID过滤 - 已删除：全局共享记忆
+        # if request.project_id:
+        #     conditions.append(
+        #         qdrant_models.FieldCondition(
+        #             key="project_id",
+        #             match=qdrant_models.MatchValue(value=request.project_id)
+        #         )
+        #     )
+        
         # 记忆单元类型过滤
         if request.unit_types:
             type_conditions = [
@@ -823,17 +875,17 @@ class SemanticRetriever:
         
         # 过期时间过滤
         if not request.include_expired:
-            current_time = datetime.utcnow().isoformat()
+            # 使用时间戳而不是ISO字符串
+            current_timestamp = datetime.utcnow().timestamp()
             conditions.append(
                 qdrant_models.Filter(
                     should=[
-                        qdrant_models.FieldCondition(
-                            key="expires_at",
-                            match=qdrant_models.MatchValue(value=None)
+                        qdrant_models.IsNullCondition(
+                            is_null=qdrant_models.PayloadField(key="expires_at")
                         ),
                         qdrant_models.FieldCondition(
                             key="expires_at",
-                            range=qdrant_models.Range(gte=current_time)
+                            range=qdrant_models.Range(gte=current_timestamp)
                         )
                     ]
                 )
@@ -872,12 +924,35 @@ class SemanticRetriever:
             Optional[MemoryUnitModel]: 记忆单元
         """
         try:
-            result = await self.db_session.execute(
-                self.db_session.query(MemoryUnitModel).filter(
-                    MemoryUnitModel.id == uuid.UUID(memory_id)
+            async with get_db_session() as session:
+                from sqlalchemy import select
+                from claude_memory.models.data_models import MemoryUnitDB
+                result = await session.execute(
+                    select(MemoryUnitDB).filter(
+                        MemoryUnitDB.id == uuid.UUID(memory_id)
+                    )
                 )
-            )
-            return result.scalar_one_or_none()
+                memory_unit_db = result.scalar_one_or_none()
+                if memory_unit_db:
+                    # 转换为 Pydantic 模型
+                    return MemoryUnitModel(
+                        id=str(memory_unit_db.id),
+                        # project_id=memory_unit_db.project_id,  # 已删除：全局共享记忆
+                        conversation_id=str(memory_unit_db.conversation_id),
+                        unit_type=memory_unit_db.unit_type,
+                        title=memory_unit_db.title,
+                        summary=memory_unit_db.summary,
+                        content=memory_unit_db.content,
+                        keywords=memory_unit_db.keywords or [],
+                        relevance_score=memory_unit_db.relevance_score,
+                        token_count=memory_unit_db.token_count,
+                        created_at=memory_unit_db.created_at,
+                        updated_at=memory_unit_db.updated_at,
+                        expires_at=memory_unit_db.expires_at,
+                        metadata=memory_unit_db.meta_data or {},
+                        is_active=memory_unit_db.is_active
+                    )
+                return None
         except Exception as e:
             logger.warning(
                 "Failed to get memory unit by ID",
@@ -886,9 +961,9 @@ class SemanticRetriever:
             )
             return None
 
-    def _get_collections(self):
+    async def _get_collections(self):
         """获取Qdrant集合列表"""
-        return self.qdrant_client.get_collections()
+        return await self.qdrant_client.get_collections()
 
     def _generate_search_cache_key(self, request: RetrievalRequest) -> str:
         """
@@ -964,23 +1039,27 @@ class SemanticRetriever:
         Returns:
             int: 记忆单元数量
         """
-        query = self.db_session.query(func.count(MemoryUnitModel.id))
-        
-        # 应用类型过滤
-        if unit_types:
-            query = query.filter(MemoryUnitModel.unit_type.in_(unit_types))
-        
-        # 排除过期记忆
-        if not include_expired:
-            query = query.filter(
-                or_(
-                    MemoryUnitModel.expires_at.is_(None),
-                    MemoryUnitModel.expires_at > datetime.utcnow()
+        async with get_db_session() as session:
+            from sqlalchemy import select
+            from claude_memory.models.data_models import MemoryUnitDB
+            query = select(func.count(MemoryUnitDB.id))
+            
+            # 应用类型过滤
+            if unit_types:
+                query = query.filter(MemoryUnitDB.unit_type.in_(unit_types))
+            
+            # 排除过期记忆
+            if not include_expired:
+                query = query.filter(
+                    or_(
+                        MemoryUnitDB.expires_at.is_(None),
+                        MemoryUnitDB.expires_at > datetime.utcnow()
+                    )
                 )
-            )
-        
-        result = await query.scalar()
-        return result or 0
+            
+            result = await session.execute(query)
+            count = result.scalar()
+            return count or 0
 
     @handle_exceptions(logger=logger, default_return=False)
     async def delete_memory_unit(self, memory_id: uuid.UUID) -> bool:
@@ -995,7 +1074,7 @@ class SemanticRetriever:
         """
         try:
             # 从Qdrant删除
-            self.qdrant_client.delete(
+            await self.qdrant_client.delete(
                 collection_name=self.collection_name,
                 points_selector=qdrant_models.PointIdsList(
                     points=[str(memory_id)]
@@ -1005,19 +1084,21 @@ class SemanticRetriever:
             # 从数据库删除
             from sqlalchemy import delete
             
-            await self.db_session.execute(
-                delete(MemoryUnitModel).where(
-                    MemoryUnitModel.id == memory_id
+            async with get_db_session() as session:
+                from claude_memory.models.data_models import MemoryUnitDB
+                await session.execute(
+                    delete(MemoryUnitDB).where(
+                        MemoryUnitDB.id == memory_id
+                    )
+                )
+                
+                await session.execute(
+                    delete(EmbeddingDB).where(
+                        EmbeddingDB.memory_unit_id == memory_id
                 )
             )
             
-            await self.db_session.execute(
-                delete(EmbeddingModel).where(
-                    EmbeddingModel.memory_unit_id == memory_id
-                )
-            )
-            
-            await self.db_session.commit()
+            await session.commit()
             
             logger.info("Memory unit deleted", memory_id=str(memory_id))
             return True
@@ -1028,66 +1109,19 @@ class SemanticRetriever:
                 memory_id=str(memory_id),
                 error=str(e)
             )
-            await self.db_session.rollback()
+            # rollback is handled by the context manager
             return False
-
-    @handle_exceptions(logger=logger, reraise=True)
-    async def _generate_embedding(self, text: str) -> np.ndarray:
-        """
-        生成文本嵌入向量
-        
-        Args:
-            text: 输入文本
-            
-        Returns:
-            np.ndarray: 嵌入向量
-        """
-        # 缓存检查
-        cache_key = hash(text) % 10000  # 简单的缓存键
-        cache_key_str = str(cache_key)
-        
-        if cache_key_str in self.embedding_cache:
-            return self.embedding_cache[cache_key_str]
-        
-        # 清理缓存
-        if len(self.embedding_cache) >= self.max_cache_size:
-            # 删除一半的缓存
-            keys_to_remove = list(self.embedding_cache.keys())[:self.max_cache_size // 2]
-            for key in keys_to_remove:
-                del self.embedding_cache[key]
-        
+    
+    async def close(self) -> None:
+        """关闭资源"""
         try:
-            # 使用模型管理器生成嵌入
-            from claude_memory.utils.model_manager import ModelManager
-            model_manager = ModelManager()
+            if hasattr(self, 'model_manager') and self.model_manager:
+                await self.model_manager.close()
+                logger.info("SemanticRetriever model_manager closed")
             
-            # 使用embedding模型生成向量
-            embedding_result = await model_manager.generate_embedding(text)
-            embedding_vector = np.array(embedding_result)
-            
-            # 确保向量维度正确
-            expected_size = self.settings.qdrant.vector_size
-            if len(embedding_vector) != expected_size:
-                # 如果维度不匹配，进行截断或填充
-                if len(embedding_vector) > expected_size:
-                    embedding_vector = embedding_vector[:expected_size]
-                else:
-                    # 用零填充
-                    padding = np.zeros(expected_size - len(embedding_vector))
-                    embedding_vector = np.concatenate([embedding_vector, padding])
-            
-            # 归一化向量
-            norm = np.linalg.norm(embedding_vector)
-            if norm > 0:
-                embedding_vector = embedding_vector / norm
-            
-            # 缓存结果
-            self.embedding_cache[cache_key_str] = embedding_vector
-            
-            return embedding_vector
-            
+            if hasattr(self, 'qdrant_client') and self.qdrant_client:
+                await self.qdrant_client.close()
+                logger.info("SemanticRetriever qdrant_client closed")
         except Exception as e:
-            logger.error("Failed to generate embedding", text_length=len(text), error=str(e))
-            # 返回随机向量作为后备
-            fallback_vector = np.random.normal(0, 0.1, self.settings.qdrant.vector_size)
-            return fallback_vector / np.linalg.norm(fallback_vector)
+            logger.warning(f"Error closing SemanticRetriever resources: {e}")
+

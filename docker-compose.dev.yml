@@ -1,0 +1,124 @@
+# Claude Memory MCP Service - 个人开发环境
+# Ubuntu 22.04 个人开发一键启动配置
+
+services:
+  # PostgreSQL数据库服务
+  postgres:
+    image: postgres:15-alpine
+    container_name: claude-memory-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: claude_memory
+      POSTGRES_USER: claude_memory
+      POSTGRES_PASSWORD: password
+      POSTGRES_HOST_AUTH_METHOD: md5
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - claude-memory-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U claude_memory -d claude_memory"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Qdrant向量数据库服务
+  qdrant:
+    image: qdrant/qdrant:v1.11.0
+    container_name: claude-memory-qdrant-dev
+    restart: unless-stopped
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: 6333
+      QDRANT__SERVICE__GRPC_PORT: 6334
+      QDRANT__LOG_LEVEL: INFO
+      QDRANT__TELEMETRY_DISABLED: true
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - claude-memory-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:6333/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Claude Memory MCP Service  
+  mcp-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: claude-memory-mcp-dev
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    environment:
+      # 数据库配置
+      DATABASE_URL: postgresql://claude_memory:password@postgres:5432/claude_memory
+      
+      # Qdrant配置
+      QDRANT_URL: http://qdrant:6333
+      
+      # 开发环境配置
+      APP_DEBUG: true
+      APP_ENV: development
+      MONITORING_LOG_LEVEL: DEBUG
+      
+      # 从.env文件读取API密钥
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      
+      # 性能配置（开发环境降低）
+      PERFORMANCE_CACHE_TTL_SECONDS: 300
+      PERFORMANCE_RESPONSE_CACHE_SIZE: 100
+      PERFORMANCE_MAX_CONCURRENT_REQUESTS: 5
+      
+      # 开发模式设置
+      DEV_DEVELOPMENT_MODE: true
+      DEV_MOCK_AI_RESPONSES: false
+      
+      # 项目配置
+      PROJECT__DEFAULT_PROJECT_ID: dev-project
+      PROJECT__ENABLE_CROSS_PROJECT_SEARCH: true
+      PROJECT__PROJECT_ISOLATION_MODE: relaxed
+      
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./logs:/app/logs
+      - ./src:/app/src
+      - ./prompts:/app/prompts
+      - ./.env:/app/.env:ro
+    networks:
+      - claude-memory-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+# Docker网络配置
+networks:
+  claude-memory-network:
+    driver: bridge
+    name: claude-memory-dev-net
+
+# Named Volumes
+volumes:
+  postgres_data:
+    driver: local
+    name: claude-memory-postgres-dev-data
+  qdrant_data:
+    driver: local
+    name: claude-memory-qdrant-dev-data

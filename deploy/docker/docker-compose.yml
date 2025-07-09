@@ -1,0 +1,114 @@
+# Claude Memory MCP Service - Docker Deployment
+# 跨项目共享记忆系统 - 开源友好配置
+version: '3.8'
+
+services:
+  # PostgreSQL数据库服务
+  postgres:
+    image: postgres:15-alpine
+    container_name: claude-memory-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-claude_memory}
+      POSTGRES_USER: ${POSTGRES_USER:-claude_memory}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      # 开发环境可以使用trust，生产环境建议设置密码
+      POSTGRES_HOST_AUTH_METHOD: ${POSTGRES_AUTH_METHOD:-md5}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # 使用Named Volume替代主机路径，确保跨平台兼容
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - claude-memory-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-claude_memory} -d ${POSTGRES_DB:-claude_memory}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Qdrant向量数据库服务
+  qdrant:
+    image: qdrant/qdrant:v1.11.0
+    container_name: claude-memory-qdrant
+    restart: unless-stopped
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: ${QDRANT_HTTP_PORT:-6333}
+      QDRANT__SERVICE__GRPC_PORT: ${QDRANT_GRPC_PORT:-6334}
+      QDRANT__LOG_LEVEL: ${QDRANT_LOG_LEVEL:-INFO}
+      QDRANT__TELEMETRY_DISABLED: true
+    ports:
+      - "${QDRANT_HTTP_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      # 使用Named Volume替代主机路径，确保跨平台兼容
+      - qdrant_data:/qdrant/storage
+    networks:
+      - claude-memory-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:6333/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Claude Memory MCP Service  
+  mcp-service:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: claude-memory-mcp
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    environment:
+      # 数据库配置
+      DATABASE_URL: postgresql://claude_memory:${POSTGRES_PASSWORD:-password}@postgres:5432/claude_memory
+      
+      # Qdrant配置
+      QDRANT_URL: http://qdrant:6333
+      
+      # API密钥 - 从环境变量读取
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      
+      # 性能配置
+      PERFORMANCE_CACHE_TTL_SECONDS: ${PERFORMANCE_CACHE_TTL_SECONDS:-3600}
+      PERFORMANCE_RESPONSE_CACHE_SIZE: ${PERFORMANCE_RESPONSE_CACHE_SIZE:-500}
+      PERFORMANCE_MAX_CONCURRENT_REQUESTS: ${PERFORMANCE_MAX_CONCURRENT_REQUESTS:-10}
+      
+      # 日志配置
+      MONITORING_LOG_LEVEL: ${MONITORING_LOG_LEVEL:-INFO}
+    ports:
+      - "${MCP_PORT:-8000}:8000"
+    volumes:
+      - ../../logs:/app/logs
+      - ./.env:/app/.env:ro
+    networks:
+      - claude-memory-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+# Docker网络配置
+networks:
+  claude-memory-network:
+    driver: bridge
+    name: claude-memory-net
+
+# Named Volumes - Docker自动管理，跨平台兼容
+volumes:
+  postgres_data:
+    driver: local
+    name: claude-memory-postgres-data
+  qdrant_data:
+    driver: local
+    name: claude-memory-qdrant-data

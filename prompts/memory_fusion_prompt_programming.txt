@@ -41,7 +41,7 @@ You are a **Memory Fusion Assistant** working in an AI-driven software-engineeri
 ```
 
 **Constraints**
-- Total <= **800 tokens**.
+- Total <= **3000 tokens**.
 - Do **NOT** suggest new code; do NOT answer the forthcoming question.
 - Preserve code blocks exactly; wrap stack traces in ```log``` fences.
 

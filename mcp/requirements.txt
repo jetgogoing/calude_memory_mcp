@@ -1,0 +1,41 @@
+# Claude Memory MCP Server 依赖
+# 用于跨项目共享部署
+
+# MCP 协议支持
+mcp>=1.2.1
+
+# 核心依赖
+pydantic>=2.9.2
+pydantic-settings>=2.6.1
+structlog>=24.4.0
+python-dotenv>=1.0.1
+
+# 数据库
+sqlalchemy>=2.0.35
+asyncpg>=0.30.0
+alembic>=1.14.0
+
+# 向量数据库
+qdrant-client>=1.14.3
+
+# AI 模型支持
+google-generativeai>=0.8.3
+openai>=1.58.1
+httpx>=0.28.1
+tiktoken>=0.8.0
+
+# 缓存
+redis[hiredis]>=5.2.1
+aiocache>=0.12.3
+
+# 异步支持
+aiofiles>=24.1.0
+tenacity>=9.0.0
+
+# 工具
+rich>=13.9.4
+click>=8.1.7
+
+# API Server（可选，仅在需要时安装）
+# fastapi>=0.116.0
+# uvicorn[standard]>=0.34.0

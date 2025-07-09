@@ -1,0 +1,43 @@
+service:
+  host: 0.0.0.0
+  http_port: 6333
+  grpc_port: 6334
+
+storage:
+  storage_path: ./data/qdrant
+
+# 禁用遥测和可能导致WSL2问题的功能
+telemetry_disabled: true
+log_level: INFO
+
+# 简化集群配置
+cluster:
+  enabled: false
+
+# 禁用可能使用cgroups的优化器
+optimizer:
+  # 禁用自动内存管理
+  default_segment_number: 1
+  max_segment_size_kb: 100000
+  memmap_threshold_kb: 200000
+  indexing_threshold_kb: 20000
+  flush_interval_sec: 5
+  max_optimization_threads: 1
+
+# 保守的HNSW配置
+hnsw_config:
+  max_indexing_threads: 1
+  
+# 禁用可能的内存映射优化
+wal_config:
+  wal_capacity_mb: 32
+  wal_segments_ahead: 0
+
+# 限制并发以避免资源争用
+service_config:
+  max_request_size_mb: 32
+  max_workers: 2
+  
+# 安全的段配置
+segment_config:
+  max_segment_size_kb: 50000

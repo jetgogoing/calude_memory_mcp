@@ -20,7 +20,7 @@ import structlog
 from pydantic import BaseModel, Field
 
 from ..config.settings import get_settings
-from .cost_tracker import CostTracker
+# from .cost_tracker import CostTracker  # 已删除
 from .error_handling import handle_exceptions, with_retry, ProcessingError
 
 
@@ -62,10 +62,11 @@ class RerankResponse(BaseModel):
 class ModelManager:
     """统一模型管理器"""
     
-    def __init__(self, cost_tracker: Optional[CostTracker] = None):
+    def __init__(self, cost_tracker: Optional[Any] = None):
         self.settings = get_settings()
-        self.cost_tracker = cost_tracker or CostTracker()
+        # self.cost_tracker = cost_tracker or CostTracker()  # 已删除成本追踪
         self.session: Optional[aiohttp.ClientSession] = None
+        self._session_lock = asyncio.Lock()  # 添加锁以防止并发创建会话
         
         # API配置
         self.providers = {
@@ -77,12 +78,12 @@ class ModelManager:
             'openrouter': {
                 'api_key': self.settings.models.openrouter_api_key,
                 'base_url': self.settings.models.openrouter_base_url,
-                'models': ['openai/gpt-4', 'anthropic/claude-3.5-sonnet', 'deepseek-chat']
+                'models': ['openai/gpt-4', 'anthropic/claude-3.5-sonnet', 'deepseek/deepseek-chat-v3-0324']
             },
             'siliconflow': {
                 'api_key': self.settings.models.siliconflow_api_key,
                 'base_url': self.settings.models.siliconflow_base_url,
-                'models': ['qwen3-embedding-8b', 'qwen3-reranker-8b', 'deepseek-v3']
+                'models': ['qwen3-embedding-8b', 'qwen3-reranker-8b', 'deepseek-ai/DeepSeek-V2.5']
             }
         }
         
@@ -96,12 +97,14 @@ class ModelManager:
             # OpenRouter models
             'openai/gpt-4': 'openrouter',
             'anthropic/claude-3.5-sonnet': 'openrouter',
-            'deepseek-chat': 'openrouter',
+            'deepseek/deepseek-chat-v3-0324': 'openrouter',
+            'deepseek-r1': 'openrouter',  # 添加缺失的 deepseek-r1
+            'claude-3.5-sonnet': 'openrouter',  # 添加缺失的简短名称
             
             # SiliconFlow models (v1.4: Qwen3系列)
             'Qwen/Qwen3-Embedding-8B': 'siliconflow',
             'Qwen/Qwen3-Reranker-8B': 'siliconflow',
-            'deepseek-v3': 'siliconflow',
+            'deepseek-ai/DeepSeek-V2.5': 'siliconflow',
         }
         
         logger.info(
@@ -119,30 +122,38 @@ class ModelManager:
         """异步上下文管理器出口"""
         await self.close()
     
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """惰性且线程安全地获取会话"""
+        if self.session is None:
+            async with self._session_lock:
+                # 双重检查，防止多个协程同时等待锁
+                if self.session is None:
+                    connector = aiohttp.TCPConnector(
+                        limit=100,
+                        limit_per_host=20,
+                        ttl_dns_cache=300,
+                        use_dns_cache=True
+                    )
+                    
+                    timeout = aiohttp.ClientTimeout(
+                        total=self.settings.models.request_timeout,
+                        connect=10
+                    )
+                    
+                    self.session = aiohttp.ClientSession(
+                        connector=connector,
+                        timeout=timeout,
+                        headers={
+                            'User-Agent': 'claude-memory-mcp-service/1.4.0'
+                        }
+                    )
+                    
+                    logger.info("HTTP session initialized")
+        return self.session
+    
     async def initialize(self) -> None:
-        """初始化HTTP会话"""
-        if not self.session:
-            connector = aiohttp.TCPConnector(
-                limit=100,
-                limit_per_host=20,
-                ttl_dns_cache=300,
-                use_dns_cache=True
-            )
-            
-            timeout = aiohttp.ClientTimeout(
-                total=self.settings.models.request_timeout,
-                connect=10
-            )
-            
-            self.session = aiohttp.ClientSession(
-                connector=connector,
-                timeout=timeout,
-                headers={
-                    'User-Agent': 'claude-memory-mcp-service/1.4.0'
-                }
-            )
-            
-            logger.info("HTTP session initialized")
+        """初始化HTTP会话（保留以兼容现有代码）"""
+        await self._get_session()
     
     async def close(self) -> None:
         """关闭HTTP会话"""
@@ -242,7 +253,8 @@ class ModelManager:
         }
         
         try:
-            async with self.session.post(url, headers=headers, json=payload) as response:
+            session = await self._get_session()
+            async with session.post(url, headers=headers, json=payload) as response:
                 response.raise_for_status()
                 data = await response.json()
                 
@@ -250,12 +262,8 @@ class ModelManager:
                 embedding = data['data'][0]['embedding']
                 usage = data.get('usage', {})
                 
-                # 计算成本
-                cost = self.cost_tracker.calculate_cost(
-                    model,
-                    usage.get('prompt_tokens', 0),
-                    0  # embedding不计算completion tokens
-                )
+                # 不再计算成本
+                cost = 0.0
                 
                 logger.info(
                     "SiliconFlow embedding generated",
@@ -310,7 +318,8 @@ class ModelManager:
         }
         
         try:
-            async with self.session.post(url, headers=headers, json=payload) as response:
+            session = await self._get_session()
+            async with session.post(url, headers=headers, json=payload) as response:
                 response.raise_for_status()
                 data = await response.json()
                 
@@ -319,12 +328,8 @@ class ModelManager:
                 scores = [result['relevance_score'] for result in results]
                 usage = data.get('usage', {})
                 
-                # 计算成本
-                cost = self.cost_tracker.calculate_cost(
-                    model,
-                    usage.get('prompt_tokens', 0),
-                    usage.get('completion_tokens', 0)
-                )
+                # 不再计算成本
+                cost = 0.0
                 
                 logger.info(
                     "SiliconFlow rerank completed",
@@ -381,7 +386,8 @@ class ModelManager:
             payload['max_tokens'] = max_tokens
         
         try:
-            async with self.session.post(url, headers=headers, json=payload) as response:
+            session = await self._get_session()
+            async with session.post(url, headers=headers, json=payload) as response:
                 response.raise_for_status()
                 data = await response.json()
                 
@@ -389,12 +395,8 @@ class ModelManager:
                 content = data['choices'][0]['message']['content']
                 usage = data.get('usage', {})
                 
-                # 计算成本
-                cost = self.cost_tracker.calculate_cost(
-                    model,
-                    usage.get('prompt_tokens', 0),
-                    usage.get('completion_tokens', 0)
-                )
+                # 不再计算成本
+                cost = 0.0
                 
                 logger.info(
                     "SiliconFlow completion generated",

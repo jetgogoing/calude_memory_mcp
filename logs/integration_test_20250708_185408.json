@@ -1,0 +1,54 @@
+{
+  "timestamp": "2025-07-08T18:54:08.654693",
+  "project_id": "integration_test_1751972048",
+  "summary": {
+    "total": 7,
+    "passed": 1,
+    "failed": 6,
+    "duration": 0.273090124130249
+  },
+  "results": [
+    {
+      "test": "Database Connection",
+      "success": true,
+      "message": "PostgreSQL 连接成功",
+      "duration": 0.019913434982299805
+    },
+    {
+      "test": "Qdrant Connection",
+      "success": false,
+      "message": "Qdrant 返回状态码: 404",
+      "duration": 0.04987621307373047
+    },
+    {
+      "test": "Mini LLM - Classification",
+      "success": false,
+      "message": "Mini LLM 测试失败: 'MiniLLMManager' object has no attribute 'process_task'",
+      "duration": 0.016587018966674805
+    },
+    {
+      "test": "Semantic Compressor",
+      "success": false,
+      "message": "语义压缩失败: 4 validation errors for ConversationModel\nmessages.0.conversation_id\n  Field required [type=missing, input_value={'role': 'user', 'content...么是深度学习？'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.11/v/missing\nmessages.0.message_type\n  Field required [type=missing, input_value={'role': 'user', 'content...么是深度学习？'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.11/v/missing\nmessages.1.conversation_id\n  Field required [type=missing, input_value={'role': 'assistant', 'co...的一个子领域...'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.11/v/missing\nmessages.1.message_type\n  Field required [type=missing, input_value={'role': 'assistant', 'co...的一个子领域...'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.11/v/missing",
+      "duration": 0.11516928672790527
+    },
+    {
+      "test": "Semantic Retriever",
+      "success": false,
+      "message": "语义检索失败: 'SemanticRetriever' object has no attribute 'search'",
+      "duration": 0.016614198684692383
+    },
+    {
+      "test": "Project Isolation",
+      "success": false,
+      "message": "项目隔离测试失败: object ProjectModel can't be used in 'await' expression",
+      "duration": 0.05474066734313965
+    },
+    {
+      "test": "End-to-End Workflow",
+      "success": false,
+      "message": "端到端测试失败: 'ConversationCollector' object has no attribute 'collect_messages'",
+      "duration": 0.00018930435180664062
+    }
+  ]
+}

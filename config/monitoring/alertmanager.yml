@@ -1,0 +1,89 @@
+# Claude Memory MCP 服务 - Alertmanager 配置
+global:
+  # SMTP配置
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: 'claude-memory-alerts@your-domain.com'
+  smtp_auth_username: 'your-email@gmail.com'
+  smtp_auth_password: 'your-app-password'
+  
+  # 全局配置
+  resolve_timeout: 5m
+
+# 告警路由配置
+route:
+  # 默认接收者
+  receiver: 'claude-memory-team'
+  
+  # 分组策略
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 12h
+  
+  # 路由规则
+  routes:
+    # 严重告警立即发送
+    - match:
+        severity: critical
+      receiver: 'claude-memory-oncall'
+      group_wait: 0s
+      repeat_interval: 1h
+      
+    # 业务告警
+    - match:
+        service: claude-memory
+        severity: warning
+      receiver: 'claude-memory-team'
+      repeat_interval: 4h
+      
+    # 基础设施告警
+    - match_re:
+        alertname: '.*(Database|Qdrant|Disk).*'
+      receiver: 'infrastructure-team'
+      repeat_interval: 2h
+
+# 接收者配置
+receivers:
+  # 默认团队
+  - name: 'claude-memory-team'
+    email_configs:
+      - to: 'team@your-domain.com'
+        headers:
+          Subject: '[Claude Memory] {{ .GroupLabels.alertname }} - {{ .GroupLabels.severity }}'
+    webhook_configs:
+      - url: 'http://localhost:8081/webhook'
+        send_resolved: true
+        
+  # 值班人员（严重告警）
+  - name: 'claude-memory-oncall'
+    email_configs:
+      - to: 'oncall@your-domain.com'
+        headers:
+          Subject: '[CRITICAL] Claude Memory Alert: {{ .GroupLabels.alertname }}'
+    # PagerDuty集成（可选）
+    # pagerduty_configs:
+    #   - service_key: 'your-pagerduty-service-key'
+    
+  # 基础设施团队
+  - name: 'infrastructure-team'
+    email_configs:
+      - to: 'infra@your-domain.com'
+        headers:
+          Subject: '[Infrastructure] {{ .GroupLabels.alertname }}'
+
+# 告警抑制规则
+inhibit_rules:
+  # 当服务宕机时，抑制其他相关告警
+  - source_match:
+      alertname: 'ServiceDown'
+      severity: 'critical'
+    target_match_re:
+      alertname: '(HighLatency|HighErrorRate|HealthCheckFailing)'
+    equal: ['service']
+    
+  # 当数据库连接失败时，抑制记忆创建失败告警
+  - source_match:
+      alertname: 'PostgreSQLConnectionFailure'
+    target_match:
+      alertname: 'MemoryCreationFailures'
+    equal: ['service']

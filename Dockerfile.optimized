@@ -1,0 +1,58 @@
+# 阶段1：构建阶段
+FROM python:3.11-slim as builder
+
+WORKDIR /build
+
+# 只复制依赖文件
+COPY requirements.txt .
+
+# 创建虚拟环境并安装依赖
+RUN python -m venv /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir --upgrade pip && \
+    /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
+
+# 阶段2：运行阶段
+FROM python:3.11-slim
+
+# 安装运行时依赖
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    netcat-traditional \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -m -u 1000 claude
+
+# 复制虚拟环境
+COPY --from=builder /opt/venv /opt/venv
+
+# 设置工作目录
+WORKDIR /app
+
+# 复制应用代码（以非root用户身份）
+COPY --chown=claude:claude src/ ./src/
+COPY --chown=claude:claude mcp/ ./mcp/
+COPY --chown=claude:claude scripts/ ./scripts/
+COPY --chown=claude:claude config/ ./config/
+COPY --chown=claude:claude prompts/ ./prompts/
+COPY --chown=claude:claude docker-entrypoint.sh /docker-entrypoint.sh
+
+# 创建必要目录
+RUN mkdir -p logs storage && chown -R claude:claude /app
+
+# 切换到非root用户
+USER claude
+
+# 设置环境变量
+ENV PATH="/opt/venv/bin:$PATH"
+ENV PYTHONPATH=/app/src:$PYTHONPATH
+ENV PYTHONUNBUFFERED=1
+ENV CLAUDE_MEMORY_HOME=/app
+ENV CLAUDE_MEMORY_PROJECT_ID=global
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import sys; sys.path.insert(0, '/app/src'); from claude_memory.utils.error_handling import ErrorHandler; print('healthy')" || exit 1
+
+# 默认启动API服务器（最通用的模式）
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["api"]

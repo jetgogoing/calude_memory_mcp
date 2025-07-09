@@ -1,0 +1,76 @@
+# Docker ignore file
+# 排除不需要打包进镜像的文件
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# Development
+.git/
+.gitignore
+.env
+.env.*
+!.env.example
+*.log
+logs/
+*.db
+*.sqlite
+
+# Testing
+tests/
+test_*.py
+*_test.py
+conftest.py
+pytest.ini
+.pytest_cache/
+
+# Documentation
+docs/
+*.md
+!README.md
+LICENSE
+
+# Deployment
+deploy/
+!deploy/docker/Dockerfile
+scripts/
+docker-compose*.yml
+kubernetes/
+k8s/
+
+# Data
+data/
+storage/
+backups/
+snapshots/
+reports/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Project specific
+examples/
+models/
+claude_backup.json
+*.pid
+*.tar.gz
+10.MD
+共享记忆*.md

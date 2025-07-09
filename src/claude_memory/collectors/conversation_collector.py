@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Union
 
 import aiofiles
+import httpx
 import structlog
 from watchfiles import awatch, Change
 from pydantic import BaseModel, Field
@@ -58,13 +59,16 @@ class ConversationCollector:
     - 性能优化和资源管理
     """
     
-    def __init__(self):
+    def __init__(self, project_id: Optional[str] = None):
         self.settings = get_settings()
         self.text_processor = TextProcessor()
         self.is_running = False
         self.active_sessions: Set[str] = set()
         self.conversation_cache: Dict[str, ConversationModel] = {}
         self.last_processed_timestamp: Optional[datetime] = None
+        
+        # 项目ID配置 - 使用提供的project_id或默认值
+        self.project_id = project_id or self.settings.project.default_project_id
         
         # CLI日志路径配置
         self.cli_log_path = Path(self.settings.cli.claude_cli_log_path).expanduser()
@@ -74,11 +78,17 @@ class ConversationCollector:
         self.batch_size = self.settings.performance.batch_size
         self.polling_interval = self.settings.cli.cli_polling_interval_seconds
         
+        # API Server配置
+        self.api_base_url = os.getenv("CLAUDE_MEMORY_API_URL", "http://localhost:8000")
+        self.http_client: Optional[httpx.AsyncClient] = None
+        
         logger.info(
             "ConversationCollector initialized",
+            project_id=self.project_id,
             cli_log_path=str(self.cli_log_path),
             config_path=str(self.config_path),
             batch_size=self.batch_size,
+            api_base_url=self.api_base_url,
         )
 
     @handle_exceptions(logger=logger, default_return=False)
@@ -95,6 +105,24 @@ class ConversationCollector:
             
         try:
             self.is_running = True
+            
+            # 初始化HTTP客户端
+            self.http_client = httpx.AsyncClient(
+                base_url=self.api_base_url,
+                timeout=httpx.Timeout(30.0),
+                headers={"Content-Type": "application/json"}
+            )
+            
+            # 验证API Server连接
+            try:
+                response = await self.http_client.get("/health")
+                if response.status_code == 200:
+                    logger.info("Successfully connected to API Server")
+                else:
+                    logger.warning(f"API Server health check returned {response.status_code}")
+            except Exception as e:
+                logger.error(f"Failed to connect to API Server: {e}")
+                # 继续运行，收集的对话将缓存在本地
             
             # 验证CLI环境
             if not await self._validate_cli_environment():
@@ -506,6 +534,7 @@ class ConversationCollector:
         total_tokens = sum(msg.token_count for msg in messages)
         
         conversation = ConversationModel(
+            project_id=self.project_id,  # 添加project_id
             session_id=session_id,
             messages=messages,
             message_count=len(messages),
@@ -518,6 +547,7 @@ class ConversationCollector:
                 'source': 'file_watch',
                 'original_entries_count': len(entries),
                 'filtered_entries_count': len(valid_entries),
+                'project_id': self.project_id,  # 在metadata中也记录project_id
             }
         )
         
@@ -530,6 +560,14 @@ class ConversationCollector:
             messages_count=len(messages),
             total_tokens=total_tokens,
         )
+        
+        # 立即发送到API Server
+        if await self._send_conversation_to_api(conversation):
+            logger.info("Conversation sent to API Server immediately")
+        else:
+            # 如果发送失败，加入缓存
+            self.conversation_cache[session_id] = conversation
+            logger.warning("Failed to send conversation, added to cache")
         
         return conversation
 
@@ -703,5 +741,69 @@ class ConversationCollector:
                 "Flushing conversation cache",
                 cached_conversations=len(self.conversation_cache)
             )
-            # 这里可以添加将缓存保存到数据库的逻辑
+            # 将缓存的对话发送到API Server
+            for session_id, conversation in self.conversation_cache.items():
+                await self._send_conversation_to_api(conversation)
             self.conversation_cache.clear()
+    
+    async def _send_conversation_to_api(self, conversation: ConversationModel) -> bool:
+        """
+        将对话发送到API Server
+        
+        Args:
+            conversation: 对话模型
+            
+        Returns:
+            bool: 是否发送成功
+        """
+        if not self.http_client:
+            logger.warning("HTTP client not initialized, caching conversation locally")
+            return False
+        
+        try:
+            # 准备请求数据
+            request_data = {
+                "project_id": self.project_id,
+                "session_id": conversation.session_id,
+                "title": conversation.title,
+                "messages": [
+                    {
+                        "message_type": msg.message_type.value,
+                        "content": msg.content,
+                        "metadata": msg.metadata,
+                        "timestamp": msg.created_at.isoformat()
+                    }
+                    for msg in conversation.messages
+                ],
+                "metadata": conversation.metadata
+            }
+            
+            # 发送到API Server
+            response = await self.http_client.post(
+                "/conversation/store",
+                json=request_data
+            )
+            
+            if response.status_code == 200:
+                logger.info(
+                    "Successfully sent conversation to API Server",
+                    session_id=conversation.session_id,
+                    message_count=len(conversation.messages)
+                )
+                return True
+            else:
+                logger.error(
+                    "Failed to send conversation to API Server",
+                    session_id=conversation.session_id,
+                    status_code=response.status_code,
+                    response=response.text
+                )
+                return False
+                
+        except Exception as e:
+            logger.error(
+                "Error sending conversation to API Server",
+                session_id=conversation.session_id,
+                error=str(e)
+            )
+            return False

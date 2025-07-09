@@ -1,0 +1,35 @@
+service:
+  host: 0.0.0.0
+  http_port: 6333
+  grpc_port: 6334
+
+storage:
+  storage_path: /qdrant/storage
+
+# 禁用遥测
+telemetry_disabled: true
+log_level: INFO
+
+# Docker环境优化配置
+cluster:
+  enabled: false
+
+# 适中的性能配置
+optimizer:
+  default_segment_number: 2
+  max_segment_size_kb: 200000
+  memmap_threshold_kb: 400000
+  indexing_threshold_kb: 40000
+  flush_interval_sec: 10
+  max_optimization_threads: 2
+
+hnsw_config:
+  max_indexing_threads: 2
+
+wal_config:
+  wal_capacity_mb: 64
+  wal_segments_ahead: 1
+
+service_config:
+  max_request_size_mb: 64
+  max_workers: 4

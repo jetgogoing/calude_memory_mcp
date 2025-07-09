@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """
-Claude Memory告警Webhook接收器
-接收Alertmanager发送的告警并记录到日志
+Claude Memory MCP服务 - 告警Webhook接收器
+
+接收Alertmanager发送的告警并记录到日志文件。
+支持按严重级别分类记录，并可扩展到其他通知渠道。
 """
 
 import json
+import os
 import time
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 import threading
+import logging
+from pathlib import Path
 
 class AlertWebhookHandler(BaseHTTPRequestHandler):
     """告警Webhook处理器"""

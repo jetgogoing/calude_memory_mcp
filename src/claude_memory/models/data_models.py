@@ -24,6 +24,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -42,8 +43,6 @@ class MessageType(str, Enum):
 
 class MemoryUnitType(str, Enum):
     """记忆单元类型"""
-    GLOBAL_MU = "global_mu"
-    QUICK_MU = "quick_mu"
     CONVERSATION = "conversation"
     ERROR_LOG = "error_log"
     DECISION = "decision"
@@ -80,6 +79,7 @@ class ConversationModel(BaseModel):
     """对话模型"""
     
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    # project_id: str = Field(default="default", description="项目ID")  # 已删除：全局共享记忆
     session_id: Optional[str] = None
     title: str = ""
     messages: List[MessageModel] = []
@@ -97,18 +97,20 @@ class MemoryUnitModel(BaseModel):
     """记忆单元模型"""
     
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="memory_id")
+    # project_id: str = Field(default="default", description="项目ID")  # 已删除：全局共享记忆
     conversation_id: str
     unit_type: MemoryUnitType
     title: str
     summary: str
     content: str
-    keywords: List[str] = []
+    keywords: Optional[List[str]] = []
     relevance_score: float = 0.0
+    token_count: int = 0
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     expires_at: Optional[datetime] = None
     metadata: Optional[Dict[str, Any]] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    is_active: bool = True
     
     class Config:
         from_attributes = True
@@ -136,7 +138,7 @@ class SearchQuery(BaseModel):
     query: str = Field(description="搜索查询文本")
     query_type: str = Field(default="hybrid", description="查询类型")
     limit: int = Field(default=10, description="结果数量限制")
-    min_score: float = Field(default=0.5, description="最小相关性分数")
+    min_score: float = Field(default=0.3, description="最小相关性分数")
     context: str = Field(default="", description="上下文信息")
     memory_types: Optional[List[MemoryUnitType]] = None
     
@@ -151,6 +153,8 @@ class SearchResult(BaseModel):
     relevance_score: float
     match_type: str = "semantic"
     matched_keywords: List[str] = []
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    rerank_score: Optional[float] = None  # 添加 rerank_score 字段
     
     class Config:
         from_attributes = True
@@ -221,6 +225,11 @@ class ErrorResponse(BaseModel):
         from_attributes = True
 
 
+# class ProjectModel(BaseModel):
+#     """项目配置模型 - 已删除：全局共享记忆"""
+#     pass  # 已删除
+
+
 # SQLAlchemy 数据库模型
 class ConversationDB(Base):
     """对话数据库模型"""
@@ -228,6 +237,7 @@ class ConversationDB(Base):
     __tablename__ = "conversations"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # project_id = Column(String(255), nullable=False, default="default")  # 已删除：全局共享记忆
     session_id = Column(String(255), nullable=True)
     title = Column(String(500), nullable=False, default="")
     started_at = Column(DateTime, nullable=False, default=datetime.utcnow)
@@ -246,6 +256,8 @@ class ConversationDB(Base):
     __table_args__ = (
         Index("idx_conversations_session_id", "session_id"),
         Index("idx_conversations_started_at", "started_at"),
+        # Index("idx_conversations_project_id", "project_id"),  # 已删除：项目ID索引
+        # Index("idx_conversations_project_started", "project_id", "started_at"),  # 已删除：复合索引
     )
 
 
@@ -280,13 +292,15 @@ class MemoryUnitDB(Base):
     __tablename__ = "memory_units"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # project_id = Column(String(255), nullable=False, default="default")  # 已删除：全局共享记忆
     conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False)
     unit_type = Column(String(50), nullable=False)
     title = Column(String(500), nullable=False)
     summary = Column(Text, nullable=False)
     content = Column(Text, nullable=False)
-    keywords = Column(JSON, nullable=True)
+    keywords = Column(JSONB, nullable=True)
     relevance_score = Column(Float, nullable=False, default=0.0)
+    token_count = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     expires_at = Column(DateTime, nullable=True)
@@ -303,6 +317,8 @@ class MemoryUnitDB(Base):
         Index("idx_memory_units_type", "unit_type"),
         Index("idx_memory_units_created_at", "created_at"),
         Index("idx_memory_units_active", "is_active"),
+        # Index("idx_memory_units_project_id", "project_id"),  # 已删除：项目ID索引
+        # Index("idx_memory_units_project_type_created", "project_id", "unit_type", "created_at"),  # 已删除：复合索引
     )
 
 
@@ -334,6 +350,7 @@ class CostTrackingDB(Base):
     __tablename__ = "cost_tracking"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # project_id = Column(String(255), nullable=False, default="default")  # 已删除：全局共享记忆
     provider = Column(String(50), nullable=False)
     model_name = Column(String(100), nullable=False)
     operation_type = Column(String(50), nullable=False)  # embedding, completion, etc.
@@ -347,5 +364,11 @@ class CostTrackingDB(Base):
     __table_args__ = (
         Index("idx_cost_tracking_provider", "provider"),
         Index("idx_cost_tracking_model", "model_name"),
+        # Index("idx_cost_tracking_project_id", "project_id"),  # 已删除：项目ID索引
         Index("idx_cost_tracking_timestamp", "timestamp"),
     )
+
+
+# class ProjectDB(Base):
+#     """项目配置数据库模型 - 已删除：全局共享记忆"""
+#     pass  # 已删除

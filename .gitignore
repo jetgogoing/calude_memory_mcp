@@ -46,6 +46,8 @@ data/alertmanager/
 
 # Configuration secrets
 .env
+.env.local
+.env.*.local
 *.key
 *.pem
 

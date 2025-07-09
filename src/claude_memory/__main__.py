@@ -233,8 +233,7 @@ def run_config_check() -> None:
         print(f"重型模型: {settings.models.default_heavy_model}")
         
         # 记忆配置
-        print(f"\\nQuick记忆TTL: {settings.memory.quick_mu_ttl_hours}小时")
-        print(f"质量阈值: {settings.memory.quality_threshold}")
+        print(f"\\n质量阈值: {settings.memory.quality_threshold}")
         print(f"最大记忆单元: {settings.memory.max_memory_units}")
         
         # 性能配置

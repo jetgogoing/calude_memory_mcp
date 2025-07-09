@@ -23,16 +23,17 @@ class BuilderConfig(BaseModel):
     """构建器配置"""
     
     enable_deduplication: bool = Field(default=True, description="是否去重")
-    # v1.4: 移除Quick-MU，简化优先级权重
+    # 优先级权重配置
     priority_weights: Dict[str, float] = Field(
         default_factory=lambda: {
-            "global_mu": 1.5,
             "conversation": 1.0,
             "error_log": 1.3,
             "decision": 1.4,
+            "code_snippet": 1.2,
+            "documentation": 1.3,
             "archive": 1.1
         },
-        description="优先级权重（v1.4已移除quick_mu）"
+        description="记忆类型优先级权重"
     )
     context_prefix: str = Field(
         default="以下是相关的历史上下文信息：\n\n",

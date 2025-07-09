@@ -19,7 +19,7 @@ class DatabaseSettings(BaseSettings):
     """数据库配置"""
     
     database_url: str = Field(
-        default="sqlite:///./data/claude_memory.db",
+        default="postgresql://claude_memory:password@localhost:5433/claude_memory",
         description="数据库连接URL"
     )
     pool_size: int = Field(default=10, ge=1, le=50)
@@ -67,7 +67,7 @@ class ModelSettings(BaseSettings):
     siliconflow_base_url: str = Field(default="https://api.siliconflow.cn/v1")
     
     # 模型选择策略 (v1.4: 升级为Qwen3系列)
-    default_light_model: str = Field(default="deepseek-v3")
+    default_light_model: str = Field(default="deepseek-ai/DeepSeek-V2.5")
     default_heavy_model: str = Field(default="gemini-2.5-pro")
     # v1.4: 默认使用Qwen3-Embedding-8B (4096维)
     default_embedding_model: str = Field(default="Qwen/Qwen3-Embedding-8B")
@@ -112,18 +112,16 @@ class MemorySettings(BaseSettings):
     fuser_token_limit: int = Field(default=800, ge=100, le=2000)
     fuser_language: str = Field(default="zh", pattern="^(zh|en)$")
     
-    # 记忆单元配置 (v1.4: 移除Quick-MU相关)
+    # 记忆单元配置
     max_memory_units: int = Field(default=10000, ge=100, le=1000000)
     memory_retention_days: int = Field(default=365, ge=1, le=3650)
-    # v1.4: 保留用于兼容性
-    quick_mu_ttl_hours: int = Field(default=24, ge=1, le=168, description="保留用于兼容性")
+    retention_days: int = Field(default=365, ge=1, le=3650)  # 添加 retention_days 作为别名
     quality_threshold: float = Field(default=0.7, ge=0.0, le=1.0, description="记忆质量阈值")
-    global_mu_generation_interval_hours: int = Field(default=168, ge=24, le=720)
     
-    # Token预算配置
-    token_budget_limit: int = Field(default=6000, ge=1000, le=20000)
-    max_context_tokens: int = Field(default=4000, ge=500, le=15000)
-    emergency_token_limit: int = Field(default=1000, ge=100, le=5000)
+    # Token配置 - 无限制
+    token_budget_limit: int = Field(default=999999, ge=1000)
+    max_context_tokens: int = Field(default=999999, ge=500)
+    emergency_token_limit: int = Field(default=999999, ge=100)
     
     # 检索配置 (v1.4: 固定Top-20→Top-5策略)
     retrieval_top_k: int = Field(default=20, ge=1, le=100, description="初始检索数量，固定为20")
@@ -131,11 +129,6 @@ class MemorySettings(BaseSettings):
     similarity_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
     hybrid_search_alpha: float = Field(default=0.5, ge=0.0, le=1.0)
     
-    @validator('max_context_tokens')
-    def validate_context_tokens(cls, v, values):
-        if 'token_budget_limit' in values and v >= values['token_budget_limit']:
-            raise ValueError('max_context_tokens must be less than token_budget_limit')
-        return v
 
 
 class PerformanceSettings(BaseSettings):
@@ -183,39 +176,16 @@ class MonitoringSettings(BaseSettings):
 
 
 class CostSettings(BaseSettings):
-    """成本控制配置"""
+    """成本配置 - 已禁用所有限制"""
     
-    # API预算配置(USD)
-    monthly_budget_usd: float = Field(default=100.0, ge=1.0, le=10000.0)
-    daily_budget_usd: float = Field(default=0.5, ge=0.1, le=1000.0)  # v1.3目标: $0.3-0.5/天
+    # 无限制配置
+    monthly_budget_usd: float = Field(default=999999.0)
+    daily_budget_usd: float = Field(default=999999.0)
     
-    # v1.3成本目标
-    target_daily_cost_usd: float = Field(default=0.4, ge=0.1, le=1.0)
-    embedding_daily_budget_usd: float = Field(default=0.2, ge=0.05, le=0.5)
-    fusion_daily_budget_usd: float = Field(default=0.1, ge=0.05, le=0.5)
-    compression_daily_budget_usd: float = Field(default=0.1, ge=0.05, le=0.5)
-    
-    # 预算分配百分比
-    gemini_budget_percentage: float = Field(default=30.0, ge=0.0, le=100.0)
-    openrouter_budget_percentage: float = Field(default=50.0, ge=0.0, le=100.0)
-    siliconflow_budget_percentage: float = Field(default=20.0, ge=0.0, le=100.0)
-    
-    # 成本控制策略
-    enable_cost_alerts: bool = Field(default=True)
-    auto_degradation_enabled: bool = Field(default=True)
-    cost_alert_threshold: float = Field(default=0.8, ge=0.1, le=1.0)
-    
-    @validator('siliconflow_budget_percentage')
-    def validate_budget_percentages(cls, v, values):
-        total = v
-        if 'gemini_budget_percentage' in values:
-            total += values['gemini_budget_percentage']
-        if 'openrouter_budget_percentage' in values:
-            total += values['openrouter_budget_percentage']
-        
-        if total > 100.0:
-            raise ValueError('Total budget percentages cannot exceed 100%')
-        return v
+    # 禁用所有成本控制
+    enable_cost_alerts: bool = Field(default=False)
+    auto_degradation_enabled: bool = Field(default=False)
+    cost_alert_threshold: float = Field(default=999999.0)
 
 
 class CLISettings(BaseSettings):
@@ -251,6 +221,86 @@ class DevelopmentSettings(BaseSettings):
     mock_embedding_responses: bool = Field(default=False)
 
 
+class ProjectSettings(BaseSettings):
+    """项目配置"""
+    
+    default_project_id: str = Field(default="global", description="默认项目ID")
+    enable_cross_project_search: bool = Field(default=True, description="是否启用跨项目搜索")
+    max_projects_per_search: int = Field(default=999999, description="每次搜索所有项目")
+    project_isolation_mode: str = Field(
+        default="shared", 
+        pattern="^(strict|relaxed|shared)$",
+        description="项目隔离模式: 强制使用shared(全局共享模式)"
+    )
+
+
+class LocalModelsConfig(BaseSettings):
+    """本地模型配置"""
+    
+    enabled: bool = Field(default=True, description="是否启用本地模型")
+    models_dir: str = Field(default="./models", description="模型存储目录")
+    default_model: str = Field(default="qwen2.5-0.5b-instruct", description="默认模型")
+
+
+class MiniLLMSettings(BaseSettings):
+    """Mini LLM配置"""
+    
+    enabled: bool = Field(default=False, description="禁用Mini LLM，使用完整模型")
+    
+    # 提供商优先级配置
+    provider_priority: str = Field(
+        default="siliconflow,openrouter,gemini",
+        description="提供商优先顺序，逗号分隔",
+        alias="MINI_LLM_PROVIDER_PRIORITY"
+    )
+    
+    # 各提供商的模型配置
+    siliconflow_model: str = Field(
+        default="deepseek-ai/DeepSeek-V2.5",
+        description="SiliconFlow使用的模型",
+        alias="MINI_LLM_SILICONFLOW_MODEL"
+    )
+    openrouter_model: str = Field(
+        default="deepseek/deepseek-chat-v3-0324",
+        description="OpenRouter使用的模型",
+        alias="MINI_LLM_OPENROUTER_MODEL"
+    )
+    gemini_model: str = Field(
+        default="gemini-2.5-flash",
+        description="Gemini使用的模型",
+        alias="MINI_LLM_GEMINI_MODEL"
+    )
+    
+    # 温度和token限制
+    temperature: float = Field(default=0.3, ge=0.0, le=1.0, description="生成温度")
+    max_tokens: int = Field(default=1000, ge=100, le=4000, description="最大token数")
+    
+    # 本地模型配置
+    local_models: LocalModelsConfig = Field(default_factory=LocalModelsConfig)
+    max_memory_gb: float = Field(default=4.0, ge=0.5, le=32.0, description="最大内存使用(GB)")
+    models_dir: str = Field(default="./models", description="模型存储目录")
+    default_model: str = Field(default="qwen2.5-0.5b-instruct", description="默认本地模型")
+    
+    # 缓存配置
+    cache_ttl_seconds: int = Field(default=3600, ge=60, le=86400, description="缓存过期时间(秒)")
+    cache_max_size_mb: int = Field(default=100, ge=10, le=1000, description="缓存最大大小(MB)")
+    
+    def get_provider_priority_list(self) -> List[str]:
+        """获取提供商优先级列表"""
+        if not self.provider_priority:
+            return []
+        return [p.strip() for p in self.provider_priority.split(',') if p.strip()]
+    
+    def get_model_for_provider(self, provider: str) -> str:
+        """获取指定提供商的模型"""
+        provider_models = {
+            'siliconflow': self.siliconflow_model,
+            'openrouter': self.openrouter_model,
+            'gemini': self.gemini_model
+        }
+        return provider_models.get(provider, self.siliconflow_model)
+
+
 class ServiceSettings(BaseSettings):
     """服务配置"""
     
@@ -282,12 +332,15 @@ class Settings(BaseSettings):
     qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
     models: ModelSettings = Field(default_factory=ModelSettings)
+    model_settings: ModelSettings = Field(default_factory=ModelSettings)  # 兼容性别名
     memory: MemorySettings = Field(default_factory=MemorySettings)
     performance: PerformanceSettings = Field(default_factory=PerformanceSettings)
     monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)
     cost: CostSettings = Field(default_factory=CostSettings)
     cli: CLISettings = Field(default_factory=CLISettings)
     dev: DevelopmentSettings = Field(default_factory=DevelopmentSettings)
+    project: ProjectSettings = Field(default_factory=ProjectSettings)  # 新增：项目配置
+    mini_llm: MiniLLMSettings = Field(default_factory=MiniLLMSettings)  # 新增：Mini LLM配置
     
     class Config:
         env_file = ".env"

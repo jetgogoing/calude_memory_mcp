@@ -1,2 +1,0 @@
-pytest-asyncio
-pytest>=7.0.0

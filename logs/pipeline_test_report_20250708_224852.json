@@ -1,0 +1,86 @@
+{
+  "test_time": "2025-07-08T22:48:52.188470",
+  "test_project_id": "test_project_3afb419a",
+  "summary": {
+    "total": 15,
+    "passed": 1,
+    "failed": 14,
+    "success_rate": "6.7%"
+  },
+  "results": [
+    {
+      "test": "API健康检查",
+      "status": "通过"
+    },
+    {
+      "test": "存储chat_a",
+      "status": "失败",
+      "error": "{\"detail\":\"Not Found\"}"
+    },
+    {
+      "test": "存储chat_b",
+      "status": "失败",
+      "error": "{\"detail\":\"Not Found\"}"
+    },
+    {
+      "test": "存储chat_c",
+      "status": "失败",
+      "error": "{\"detail\":\"Not Found\"}"
+    },
+    {
+      "test": "存储chat_d",
+      "status": "失败",
+      "error": "{\"detail\":\"Not Found\"}"
+    },
+    {
+      "test": "存储chat_f",
+      "status": "失败",
+      "error": "{\"detail\":\"Not Found\"}"
+    },
+    {
+      "test": "存储chat_g",
+      "status": "失败",
+      "error": "{\"detail\":\"Not Found\"}"
+    },
+    {
+      "test": "存储chat_h",
+      "status": "失败",
+      "error": "{\"detail\":\"Not Found\"}"
+    },
+    {
+      "test": "Qdrant向量存储",
+      "status": "失败",
+      "error": "未找到向量"
+    },
+    {
+      "test": "搜索-Capital city of France?",
+      "status": "失败",
+      "error": "{\"detail\":\"Not Found\"}"
+    },
+    {
+      "test": "搜索-Eiffel Tower location",
+      "status": "失败",
+      "error": "{\"detail\":\"Not Found\"}"
+    },
+    {
+      "test": "搜索-Claude Memory architecture components",
+      "status": "失败",
+      "error": "{\"detail\":\"Not Found\"}"
+    },
+    {
+      "test": "记忆注入-Tell me about the capital of F",
+      "status": "失败",
+      "error": "{\"detail\":\"Not Found\"}"
+    },
+    {
+      "test": "记忆注入-Explain the Claude Memory arch",
+      "status": "失败",
+      "error": "{\"detail\":\"Not Found\"}"
+    },
+    {
+      "test": "端到端流程",
+      "status": "失败",
+      "error": "{\"detail\":\"Not Found\"}"
+    }
+  ]
+}

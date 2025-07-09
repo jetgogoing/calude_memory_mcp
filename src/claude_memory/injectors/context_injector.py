@@ -37,14 +37,14 @@ logger = structlog.get_logger(__name__)
 
 
 class InjectionStrategy(BaseModel):
-    """注入策略配置"""
+    """注入策略配置 - 无限制版本"""
     
     name: str
     priority: int = Field(ge=1, le=10)
-    max_memories: int = Field(default=5, ge=1, le=20)
-    token_budget: int = Field(default=2000, ge=100, le=10000)
-    relevance_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
-    include_types: List[MemoryUnitType] = Field(default_factory=lambda: [MemoryUnitType.GLOBAL_MU, MemoryUnitType.QUICK_MU])
+    max_memories: int = Field(default=999999, ge=1)  # 删除上限
+    token_budget: int = Field(default=999999, ge=100)  # 删除上限
+    relevance_threshold: float = Field(default=0.0, ge=0.0, le=1.0)
+    include_types: List[MemoryUnitType] = Field(default_factory=lambda: [MemoryUnitType.DOCUMENTATION, MemoryUnitType.CONVERSATION])
     template: str = "default"
 
 
@@ -78,33 +78,15 @@ class ContextInjector:
         self.retriever = retriever
         self.text_processor = TextProcessor()
         
-        # 注入策略配置
+        # 注入策略配置 - 删除所有限制
         self.injection_strategies = {
-            'conservative': InjectionStrategy(
-                name='conservative',
-                priority=1,
-                max_memories=3,
-                token_budget=1000,
-                relevance_threshold=0.8,
-                include_types=[MemoryUnitType.GLOBAL_MU],
-                template='minimal'
-            ),
-            'balanced': InjectionStrategy(
-                name='balanced',
-                priority=5,
-                max_memories=5,
-                token_budget=2000,
-                relevance_threshold=0.6,
-                include_types=[MemoryUnitType.GLOBAL_MU, MemoryUnitType.QUICK_MU],
-                template='standard'
-            ),
             'comprehensive': InjectionStrategy(
                 name='comprehensive',
                 priority=10,
-                max_memories=10,
-                token_budget=4000,
-                relevance_threshold=0.4,
-                include_types=[MemoryUnitType.GLOBAL_MU, MemoryUnitType.QUICK_MU, MemoryUnitType.ARCHIVE],
+                max_memories=999999,  # 无限制
+                token_budget=999999,  # 无限制
+                relevance_threshold=0.0,  # 接受所有记忆
+                include_types=[MemoryUnitType.DOCUMENTATION, MemoryUnitType.CONVERSATION, MemoryUnitType.ARCHIVE],
                 template='detailed'
             ),
         }
@@ -164,11 +146,11 @@ class ContextInjector:
                 context=request.context_hint or ""
             )
             
-            # 检索相关记忆
+            # 检索相关记忆 - 获取所有相关记忆
             retrieval_request = RetrievalRequest(
                 query=search_query,
-                limit=strategy.max_memories * 2,  # 获取更多候选
-                min_score=strategy.relevance_threshold,
+                limit=999999,  # 获取所有记忆
+                min_score=0.0,  # 接受所有记忆
                 unit_types=strategy.include_types,
                 rerank=True,
                 hybrid_search=True
@@ -196,16 +178,7 @@ class ContextInjector:
                 selected_memories, strategy, request
             )
             
-            # 验证Token预算
-            if injection_result.tokens_used > strategy.token_budget:
-                logger.warning(
-                    "Token budget exceeded, applying compression",
-                    used=injection_result.tokens_used,
-                    budget=strategy.token_budget
-                )
-                injection_result = await self._compress_injection_context(
-                    injection_result, strategy.token_budget
-                )
+            # 不再验证Token预算，接受所有记忆
             
             # 构建最终响应
             enhanced_prompt = request.original_prompt
@@ -285,18 +258,7 @@ class ContextInjector:
         token_count = 0
         
         for candidate in sorted_candidates:
-            # 检查数量限制
-            if len(selected_memories) >= strategy.max_memories:
-                break
-            
-            # 检查Token预算
-            memory_tokens = candidate.memory_unit.token_count
-            if token_count + memory_tokens > strategy.token_budget:
-                # 尝试压缩或跳过
-                if len(selected_memories) == 0:  # 至少保留一个记忆
-                    selected_memories.append(candidate)
-                    token_count += memory_tokens
-                break
+            # 不再限制数量和Token预算，接受所有记忆
             
             # 多样性检查：避免过度重复的关键词
             memory_keywords = set(candidate.memory_unit.keywords)
@@ -309,8 +271,8 @@ class ContextInjector:
         
         # 按记忆类型重新排序：Global > Quick > Archive
         type_priority = {
-            MemoryUnitType.GLOBAL_MU: 3,
-            MemoryUnitType.QUICK_MU: 2,
+            MemoryUnitType.DOCUMENTATION: 3,
+            MemoryUnitType.CONVERSATION: 2,
             MemoryUnitType.ARCHIVE: 1,
         }
         
@@ -374,7 +336,11 @@ class ContextInjector:
         
         # 计算压缩比
         original_tokens = sum(memory.memory_unit.token_count for memory in memories)
-        compression_ratio = tokens_used / original_tokens if original_tokens > 0 else 0.0
+        # 压缩比应该是压缩后相对于原始的比例，确保不超过1.0
+        if original_tokens > 0:
+            compression_ratio = min(tokens_used / original_tokens, 1.0)
+        else:
+            compression_ratio = 0.0
         
         return InjectionResult(
             injected_context=injected_context,
@@ -485,12 +451,12 @@ class ContextInjector:
         
         # 按优先级顺序处理
         type_names = {
-            MemoryUnitType.GLOBAL_MU: "全局重要记忆",
-            MemoryUnitType.QUICK_MU: "近期会话记忆", 
+            MemoryUnitType.DOCUMENTATION: "全局重要记忆",
+            MemoryUnitType.CONVERSATION: "近期会话记忆", 
             MemoryUnitType.ARCHIVE: "历史归档记忆"
         }
         
-        for unit_type in [MemoryUnitType.GLOBAL_MU, MemoryUnitType.QUICK_MU, MemoryUnitType.ARCHIVE]:
+        for unit_type in [MemoryUnitType.DOCUMENTATION, MemoryUnitType.CONVERSATION, MemoryUnitType.ARCHIVE]:
             if unit_type not in grouped_memories:
                 continue
             
@@ -620,22 +586,8 @@ class ContextInjector:
         Returns:
             InjectionStrategy: 选择的策略
         """
-        # 如果请求中指定了策略
-        if request.injection_mode and request.injection_mode in self.injection_strategies:
-            return self.injection_strategies[request.injection_mode]
-        
-        # 根据查询复杂度自动选择
-        if request.query_text:
-            query_length = len(request.query_text)
-            if query_length < 50:
-                return self.injection_strategies['conservative']
-            elif query_length < 200:
-                return self.injection_strategies['balanced']
-            else:
-                return self.injection_strategies['comprehensive']
-        
-        # 默认使用平衡策略
-        return self.injection_strategies['balanced']
+        # 始终使用comprehensive策略，注入所有记忆
+        return self.injection_strategies['comprehensive']
 
     def _generate_cache_key(self, request: ContextInjectionRequest) -> str:
         """

@@ -2,7 +2,7 @@
 Claude记忆管理MCP服务 - 语义压缩器
 
 负责将对话内容压缩成高质量的记忆单元(Memory Units)。
-使用多模型协作策略，支持Quick-MU和Global-MU两种记忆机制。
+使用多模型协作策略生成和优化记忆内容。
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ class CompressionRequest(BaseModel):
     """压缩请求模型"""
     
     conversation: ConversationModel
-    unit_type: MemoryUnitType = MemoryUnitType.QUICK_MU
+    unit_type: MemoryUnitType = MemoryUnitType.CONVERSATION
     quality_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
     max_summary_length: int = Field(default=500, ge=100, le=2000)
     include_context: bool = True
@@ -63,7 +63,6 @@ class SemanticCompressor:
     
     功能特性:
     - 多模型协作策略
-    - 双重记忆机制：Quick-MU + Global-MU
     - 质量评估和验证
     - 智能模型选择
     - 批量处理优化
@@ -74,14 +73,21 @@ class SemanticCompressor:
         self.settings = get_settings()
         self.text_processor = TextProcessor()
         
+        # 初始化模型管理器
+        from claude_memory.utils.model_manager import ModelManager
+        self.model_manager = ModelManager()
+        
         # 模型配置
-        self.light_models = ["deepseek-v3", "deepseek-r1"]
+        self.light_models = ["deepseek-ai/DeepSeek-V2.5", "deepseek-r1"]
         self.heavy_models = ["gemini-2.5-pro", "claude-3.5-sonnet"]
         
         # 质量阈值
         self.quality_thresholds = {
-            MemoryUnitType.QUICK_MU: 0.6,
-            MemoryUnitType.GLOBAL_MU: 0.8,
+            MemoryUnitType.CONVERSATION: 0.7,
+            MemoryUnitType.ERROR_LOG: 0.6,
+            MemoryUnitType.DECISION: 0.8,
+            MemoryUnitType.CODE_SNIPPET: 0.7,
+            MemoryUnitType.DOCUMENTATION: 0.8,
             MemoryUnitType.ARCHIVE: 0.5,
         }
         
@@ -162,7 +168,11 @@ class SemanticCompressor:
             # 计算压缩比
             original_tokens = request.conversation.token_count
             compressed_tokens = memory_unit.token_count
-            compression_ratio = compressed_tokens / original_tokens if original_tokens > 0 else 0.0
+            # 压缩比应该是压缩后相对于原始的比例，确保不超过1.0
+            if original_tokens > 0:
+                compression_ratio = min(compressed_tokens / original_tokens, 1.0)
+            else:
+                compression_ratio = 0.0
             
             # 处理时间
             processing_time = (datetime.utcnow() - start_time).total_seconds() * 1000
@@ -276,7 +286,7 @@ class SemanticCompressor:
                 continue
             
             # 添加消息类型标识
-            if message.message_type == MessageType.USER:
+            if message.message_type == MessageType.HUMAN:
                 processed_parts.append(f"[USER]: {clean_content}")
             elif message.message_type == MessageType.ASSISTANT:
                 processed_parts.append(f"[ASSISTANT]: {clean_content}")
@@ -302,21 +312,21 @@ class SemanticCompressor:
         token_count = await self.text_processor.count_tokens(content)
         
         # 根据记忆单元类型和内容复杂度选择模型
-        if unit_type == MemoryUnitType.QUICK_MU:
-            # Quick-MU优先使用轻量模型
+        if unit_type in [MemoryUnitType.CONVERSATION, MemoryUnitType.ERROR_LOG]:
+            # 对话和错误日志使用轻量模型
             if token_count < 2000:
-                return self.light_models[0]  # deepseek-v3
+                return self.light_models[0]  # deepseek-ai/DeepSeek-V2.5
             else:
-                return self.light_models[1]  # deepseek-r1
+                return self.light_models[1] if len(self.light_models) > 1 else self.light_models[0]
         
-        elif unit_type == MemoryUnitType.GLOBAL_MU:
-            # Global-MU使用重型模型确保质量
+        elif unit_type in [MemoryUnitType.DECISION, MemoryUnitType.DOCUMENTATION]:
+            # 决策和文档使用重型模型确保质量
             if token_count < 5000:
-                return self.heavy_models[1]  # claude-3.5-sonnet
+                return self.heavy_models[1] if len(self.heavy_models) > 1 else self.heavy_models[0]
             else:
-                return self.heavy_models[0]  # gemini-2.5-pro
+                return self.heavy_models[0]
         
-        else:  # ARCHIVE
+        else:  # CODE_SNIPPET, ARCHIVE
             # 归档类型使用轻量模型即可
             return self.light_models[0]
 
@@ -364,14 +374,17 @@ class SemanticCompressor:
         content_tokens = await self.text_processor.count_tokens(parsed_response.get('content', ''))
         
         # 设置过期时间（仅对Quick-MU）
+        # 计算过期时间 - 现在只有ARCHIVE类型会过期
         expires_at = None
-        if request.unit_type == MemoryUnitType.QUICK_MU:
+        if request.unit_type == MemoryUnitType.ARCHIVE:
             expires_at = datetime.utcnow() + timedelta(
-                hours=self.settings.memory.quick_mu_ttl_hours
+                days=self.settings.memory.retention_days
             )
         
         # 构建记忆单元
         memory_unit = MemoryUnitModel(
+            id=str(uuid.uuid4()),  # 确保id是字符串
+            project_id=request.conversation.project_id,  # 从对话继承project_id
             conversation_id=request.conversation.id,
             unit_type=request.unit_type,
             title=parsed_response.get('title', self._generate_auto_title(parsed_response['summary'])),
@@ -386,6 +399,7 @@ class SemanticCompressor:
                 'source_session': request.conversation.session_id,
                 'generation_timestamp': datetime.utcnow().isoformat(),
                 'prompt_template': 'standard_compression_v1',
+                'project_id': request.conversation.project_id,  # 在metadata中也记录
                 **parsed_response.get('metadata', {})
             },
             expires_at=expires_at,
@@ -424,7 +438,7 @@ class SemanticCompressor:
 
 """
         
-        if unit_type == MemoryUnitType.QUICK_MU:
+        if unit_type == MemoryUnitType.CONVERSATION:
             base_prompt += """记忆类型：快速记忆单元
 重点关注：
 - 当前会话的即时信息
@@ -433,7 +447,7 @@ class SemanticCompressor:
 - 短期相关的上下文信息
 
 """
-        elif unit_type == MemoryUnitType.GLOBAL_MU:
+        elif unit_type == MemoryUnitType.DOCUMENTATION:
             base_prompt += """记忆类型：全局记忆单元
 重点关注：
 - 深层的知识和见解
@@ -589,45 +603,43 @@ class SemanticCompressor:
         """
         try:
             # 构建压缩提示
-            compression_prompt = self._build_compression_prompt(
+            compression_prompt = await self._build_compression_prompt(
                 processed_content,
                 request.unit_type,
                 request.max_summary_length
             )
             
             # 使用模型管理器生成摘要
-            from claude_memory.utils.model_manager import ModelManager
-            model_manager = ModelManager()
-            
             # 生成压缩结果
-            completion_result = await model_manager.generate_completion(
-                prompt=compression_prompt,
-                model_name=model_name,
+            completion_result = await self.model_manager.generate_completion(
+                model=model_name,
+                messages=[{"role": "user", "content": compression_prompt}],
                 max_tokens=request.max_summary_length * 2,
                 temperature=0.3
             )
             
             # 解析结果
-            summary_text = completion_result.strip()
+            summary_text = completion_result.content.strip()
             
             # 生成标题
-            title = await self._generate_title(summary_text, request.unit_type)
+            title = self._generate_auto_title(summary_text)
             
-            # 提取关键词
-            keywords = await self._extract_keywords(
+            # 提取关键词 - 简单实现
+            keywords = await self.text_processor.extract_keywords(
                 summary_text + " " + processed_content
             )
             
-            # 计算过期时间
+            # 计算过期时间 - 现在只有ARCHIVE类型会过期
             expires_at = None
-            if request.unit_type == MemoryUnitType.QUICK_MU:
+            if request.unit_type == MemoryUnitType.ARCHIVE:
                 expires_at = datetime.utcnow() + timedelta(
-                    hours=self.settings.memory.quick_mu_ttl_hours
+                    days=self.settings.memory.retention_days
                 )
             
             # 构建记忆单元
             memory_unit = MemoryUnitModel(
-                id=uuid.uuid4(),
+                id=str(uuid.uuid4()),
+                project_id=request.conversation.project_id,  # 从对话继承project_id
                 conversation_id=request.conversation.id,
                 unit_type=request.unit_type,
                 title=title,
@@ -640,8 +652,9 @@ class SemanticCompressor:
                 metadata={
                     'model_used': model_name,
                     'compression_version': '1.4',
+                    'project_id': request.conversation.project_id,  # 在metadata中也记录
                     'original_length': len(processed_content),
-                    'compression_ratio': len(summary_text) / len(processed_content) if processed_content else 0,
+                    'compression_ratio': min(len(summary_text) / len(processed_content), 1.0) if processed_content else 0,
                     'message_count': request.conversation.message_count,
                     'importance_score': 0.5,  # 默认重要性分数
                     'quality_score': 0.0  # 将在质量评估后更新
@@ -807,7 +820,7 @@ class SemanticCompressor:
             # 为每个对话生成快速摘要
             quick_request = CompressionRequest(
                 conversation=conv,
-                unit_type=MemoryUnitType.QUICK_MU,
+                unit_type=MemoryUnitType.CONVERSATION,
                 max_summary_length=200
             )
             
@@ -838,12 +851,12 @@ class SemanticCompressor:
                 message_count=total_messages,
                 token_count=total_tokens
             ),
-            unit_type=MemoryUnitType.GLOBAL_MU,
+            unit_type=MemoryUnitType.DOCUMENTATION,
             max_summary_length=1000
         )
         
         # 直接调用内部方法，使用构建的回顾内容
-        model_name = await self._select_model(MemoryUnitType.GLOBAL_MU, review_content)
+        model_name = await self._select_model(MemoryUnitType.DOCUMENTATION, review_content)
         global_memory = await self._generate_memory_unit(
             global_request, review_content, model_name
         )
@@ -914,3 +927,12 @@ class SemanticCompressor:
         content_parts.append(f"平均Token使用: {sum(s['token_count'] for s in summaries) / len(summaries):.0f}个Token\n")
         
         return "".join(content_parts)
+    
+    async def close(self) -> None:
+        """关闭资源"""
+        try:
+            if hasattr(self, 'model_manager') and self.model_manager:
+                await self.model_manager.close()
+                logger.info("SemanticCompressor model_manager closed")
+        except Exception as e:
+            logger.warning(f"Error closing SemanticCompressor resources: {e}")

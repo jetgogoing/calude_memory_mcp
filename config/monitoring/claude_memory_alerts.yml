@@ -1,0 +1,170 @@
+# Claude Memory MCP 服务 - 告警规则
+groups:
+  - name: claude_memory_availability
+    interval: 30s
+    rules:
+      # 服务可用性
+      - alert: ServiceDown
+        expr: up{job="claude-memory-mcp"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: claude-memory
+        annotations:
+          summary: "Claude Memory MCP服务宕机"
+          description: "Claude Memory MCP服务已经离线超过2分钟"
+          
+      # 健康检查失败
+      - alert: HealthCheckFailing
+        expr: claude_memory_health_status != 1
+        for: 5m
+        labels:
+          severity: warning
+          service: claude-memory
+        annotations:
+          summary: "健康检查失败"
+          description: "Claude Memory健康检查已失败超过5分钟"
+
+  - name: claude_memory_performance
+    interval: 30s
+    rules:
+      # 高延迟告警
+      - alert: HighLatency
+        expr: claude_memory_response_time_ms > 1000
+        for: 5m
+        labels:
+          severity: warning
+          service: claude-memory
+        annotations:
+          summary: "API响应延迟过高"
+          description: "平均响应时间超过1000ms已持续5分钟 (当前: {{ $value }}ms)"
+          
+      # 极高延迟告警
+      - alert: VeryHighLatency
+        expr: claude_memory_response_time_ms > 5000
+        for: 2m
+        labels:
+          severity: critical
+          service: claude-memory
+        annotations:
+          summary: "API响应延迟严重"
+          description: "平均响应时间超过5000ms已持续2分钟 (当前: {{ $value }}ms)"
+          
+      # 错误率告警
+      - alert: HighErrorRate
+        expr: rate(claude_memory_errors_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: claude-memory
+        annotations:
+          summary: "错误率过高"
+          description: "错误率超过5%已持续5分钟 (当前: {{ $value | humanizePercentage }})"
+
+  - name: claude_memory_resources
+    interval: 30s
+    rules:
+      # 内存使用告警
+      - alert: HighMemoryUsage
+        expr: claude_memory_memory_usage_mb > 4096
+        for: 10m
+        labels:
+          severity: warning
+          service: claude-memory
+        annotations:
+          summary: "内存使用过高"
+          description: "服务内存使用超过4GB已持续10分钟 (当前: {{ $value }}MB)"
+          
+      # CPU使用告警
+      - alert: HighCPUUsage
+        expr: claude_memory_cpu_usage_percent > 80
+        for: 10m
+        labels:
+          severity: warning
+          service: claude-memory
+        annotations:
+          summary: "CPU使用率过高"
+          description: "CPU使用率超过80%已持续10分钟 (当前: {{ $value }}%)"
+          
+      # 数据库连接池告警
+      - alert: DatabaseConnectionPoolExhausted
+        expr: claude_memory_db_connections_active / claude_memory_db_connections_max > 0.9
+        for: 5m
+        labels:
+          severity: critical
+          service: claude-memory
+        annotations:
+          summary: "数据库连接池即将耗尽"
+          description: "数据库连接池使用率超过90% ({{ $value | humanizePercentage }})"
+
+  - name: claude_memory_business
+    interval: 60s
+    rules:
+      # 记忆创建失败率
+      - alert: MemoryCreationFailures
+        expr: rate(claude_memory_memory_creation_failures_total[10m]) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          service: claude-memory
+        annotations:
+          summary: "记忆创建失败率过高"
+          description: "记忆创建失败率超过10%已持续10分钟"
+          
+      # 向量存储失败
+      - alert: VectorStorageFailures
+        expr: rate(claude_memory_vector_storage_failures_total[10m]) > 0.05
+        for: 10m
+        labels:
+          severity: critical
+          service: claude-memory
+        annotations:
+          summary: "向量存储失败"
+          description: "向量存储失败率超过5%，可能影响检索功能"
+          
+      # API调用成本告警
+      - alert: HighAPICost
+        expr: claude_memory_api_cost_daily_usd > 3.0
+        for: 30m
+        labels:
+          severity: warning
+          service: claude-memory
+        annotations:
+          summary: "API成本超出预算"
+          description: "今日API调用成本已达${{ $value }}，超出预算"
+
+  - name: claude_memory_infrastructure
+    interval: 30s
+    rules:
+      # PostgreSQL连接失败
+      - alert: PostgreSQLConnectionFailure
+        expr: claude_memory_postgres_connection_failures_total > 0
+        for: 2m
+        labels:
+          severity: critical
+          service: claude-memory
+        annotations:
+          summary: "PostgreSQL连接失败"
+          description: "检测到PostgreSQL连接失败"
+          
+      # Qdrant连接失败
+      - alert: QdrantConnectionFailure
+        expr: claude_memory_qdrant_connection_failures_total > 0
+        for: 2m
+        labels:
+          severity: critical
+          service: claude-memory
+        annotations:
+          summary: "Qdrant连接失败"
+          description: "检测到Qdrant向量数据库连接失败"
+          
+      # 磁盘空间告警
+      - alert: LowDiskSpace
+        expr: node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: claude-memory
+        annotations:
+          summary: "磁盘空间不足"
+          description: "根分区可用空间低于10% (剩余: {{ $value | humanizePercentage }})"

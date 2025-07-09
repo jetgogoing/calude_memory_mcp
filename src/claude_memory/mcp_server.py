@@ -7,9 +7,13 @@ Claude记忆管理MCP服务 - MCP服务器实现
 import asyncio
 import json
 import logging
+import os
 import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence
+from io import StringIO
+
+import httpx
 
 import structlog
 from mcp.server import Server
@@ -30,6 +34,7 @@ from pydantic import AnyUrl
 from claude_memory.config.settings import get_settings
 from claude_memory.database.session_manager import get_session_manager
 from claude_memory.managers.service_manager import ServiceManager
+# from claude_memory.managers.cross_project_search import CrossProjectSearchRequest  # 已删除：全局共享记忆
 from claude_memory.models.data_models import (
     ContextInjectionRequest,
     SearchQuery,
@@ -37,7 +42,43 @@ from claude_memory.models.data_models import (
 )
 from claude_memory.utils.error_handling import handle_exceptions
 
-# 配置结构化日志
+# 配置结构化日志 - 只写入文件，不干扰stdio
+import os
+from pathlib import Path
+from logging.handlers import TimedRotatingFileHandler
+
+# 创建日志目录
+log_dir = Path(__file__).parent.parent.parent / "logs"
+log_dir.mkdir(exist_ok=True)
+
+# 配置文件日志handler
+file_handler = TimedRotatingFileHandler(
+    log_dir / "mcp_server.log",
+    when="midnight", interval=1, backupCount=30
+)
+file_handler.setFormatter(logging.Formatter(
+    '%(asctime)s - %(levelname)s - %(message)s'
+))
+
+# 配置structlog只写文件
+logging.getLogger().handlers = [file_handler]
+logging.getLogger().setLevel(logging.INFO)
+
+# stderr重定向类，避免干扰stdio通信
+class StderrToLogger:
+    """将stderr重定向到日志文件，避免干扰stdio通信"""
+    
+    def __init__(self, logger):
+        self.logger = logger
+        self.buffer = StringIO()
+    
+    def write(self, msg):
+        if msg.strip():
+            self.logger.error(f"STDERR: {msg.strip()}")
+    
+    def flush(self):
+        pass
+
 structlog.configure(
     processors=[
         structlog.stdlib.filter_by_level,
@@ -76,6 +117,10 @@ class ClaudeMemoryMCPServer:
         self.service_manager: Optional[ServiceManager] = None
         self.session_manager = None
         
+        # API Server 配置
+        self.api_base_url = os.getenv("CLAUDE_MEMORY_API_URL", "http://localhost:8000")
+        self.http_client: Optional[httpx.AsyncClient] = None
+        
         # 注册MCP处理器
         self._register_handlers()
 
@@ -86,12 +131,29 @@ class ClaudeMemoryMCPServer:
         try:
             logger.info("Initializing Claude Memory MCP Server...")
             
-            # 初始化会话管理器
-            self.session_manager = await get_session_manager()
+            # 初始化HTTP客户端
+            self.http_client = httpx.AsyncClient(
+                base_url=self.api_base_url,
+                timeout=httpx.Timeout(30.0),
+                headers={"Content-Type": "application/json"}
+            )
             
-            # 初始化服务管理器
-            self.service_manager = ServiceManager()
-            await self.service_manager.start_service()
+            # 检查API Server健康状态
+            try:
+                response = await self.http_client.get("/health")
+                if response.status_code != 200:
+                    logger.warning(f"API Server health check returned {response.status_code}")
+            except Exception as e:
+                logger.warning(f"Failed to connect to API Server at {self.api_base_url}: {e}")
+            
+            # 保留原有的ServiceManager初始化作为后备
+            try:
+                self.session_manager = await get_session_manager()
+                self.service_manager = ServiceManager()
+                await self.service_manager.start_service()
+                logger.info("ServiceManager initialized as fallback")
+            except Exception as e:
+                logger.warning("Failed to initialize ServiceManager (will use API only)", error=str(e))
             
             logger.info("Claude Memory MCP Server initialized successfully")
             
@@ -105,6 +167,10 @@ class ClaudeMemoryMCPServer:
         """
         try:
             logger.info("Cleaning up Claude Memory MCP Server...")
+            
+            if self.http_client:
+                await self.http_client.aclose()
+                self.http_client = None
             
             if self.service_manager:
                 await self.service_manager.stop_service()
@@ -161,6 +227,11 @@ class ClaudeMemoryMCPServer:
                             "query": {
                                 "type": "string",
                                 "description": "搜索查询文本"
+                            },
+                            "project_id": {
+                                "type": "string",
+                                "description": "项目ID，用于跨项目隔离",
+                                "default": "default"
                             },
                             "limit": {
                                 "type": "integer",
@@ -245,6 +316,54 @@ class ClaudeMemoryMCPServer:
                             }
                         }
                     }
+                ),
+                Tool(
+                    name="claude_memory_cross_project_search",
+                    description="在多个项目中搜索相关的历史记忆和对话",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "搜索查询文本"
+                            },
+                            "project_ids": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "要搜索的项目ID列表（可选）"
+                            },
+                            "include_all_projects": {
+                                "type": "boolean",
+                                "description": "是否搜索所有活跃项目",
+                                "default": False
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "返回结果数量限制",
+                                "default": 20,
+                                "minimum": 1,
+                                "maximum": 100
+                            },
+                            "merge_strategy": {
+                                "type": "string",
+                                "enum": ["score", "time", "project"],
+                                "description": "结果合并策略",
+                                "default": "score"
+                            },
+                            "max_results_per_project": {
+                                "type": "integer",
+                                "description": "每个项目的最大结果数",
+                                "default": 10,
+                                "minimum": 1,
+                                "maximum": 50
+                            },
+                            "user_id": {
+                                "type": "string",
+                                "description": "用户ID，用于权限验证（可选，默认从环境变量获取）"
+                            }
+                        },
+                        "required": ["query"]
+                    }
                 )
             ]
 
@@ -274,6 +393,9 @@ class ClaudeMemoryMCPServer:
                 
                 elif name == "claude_memory_health":
                     return await self._handle_health(arguments)
+                
+                elif name == "claude_memory_cross_project_search":
+                    return await self._handle_cross_project_search(arguments)
                 
                 else:
                     return [TextContent(
@@ -320,49 +442,86 @@ class ClaudeMemoryMCPServer:
             Sequence[TextContent]: 搜索结果
         """
         query_text = arguments.get("query", "")
+        # project_id = arguments.get("project_id", os.getenv("CLAUDE_MEMORY_PROJECT_ID", "global"))  # 已删除：全局共享记忆
         limit = arguments.get("limit", 5)
-        min_score = arguments.get("min_score", 0.6)
+        min_score = arguments.get("min_score", 0.3)  # 降低默认评分阈值
         memory_types = arguments.get("memory_types")
         
-        # 构建搜索查询
-        search_query = SearchQuery(
-            query=query_text,
-            query_type="hybrid",
-            limit=limit,
-            min_score=min_score,
-            context=""
-        )
+        try:
+            # 优先使用API Server
+            if self.http_client:
+                request_data = {
+                    "query": query_text,
+                    # "project_id": project_id,  # 已删除：全局共享记忆
+                    "limit": limit,
+                    "min_score": min_score,
+                    "query_type": "hybrid"
+                }
+                
+                response = await self.http_client.post("/memory/search", json=request_data)
+                
+                if response.status_code == 200:
+                    response_data = response.json()
+                    # API返回的数据已经是格式化好的
+                    return [TextContent(
+                        type="text",
+                        text=json.dumps(response_data, ensure_ascii=False, indent=2)
+                    )]
+                else:
+                    logger.warning(f"API Server returned {response.status_code}, falling back to ServiceManager")
+        except Exception as e:
+            logger.warning(f"Failed to call API Server: {e}, falling back to ServiceManager")
         
-        # 执行搜索
-        search_response = await self.service_manager.search_memories(search_query)
+        # 回退到直接使用ServiceManager
+        if self.service_manager:
+            # 构建搜索查询
+            search_query = SearchQuery(
+                query=query_text,
+                query_type="hybrid",
+                limit=limit,
+                min_score=min_score,
+                context=""
+            )
+            
+            # 执行搜索（全局共享记忆）
+            search_response = await self.service_manager.search_memories(search_query)
+            
+            # 格式化结果
+            results = []
+            for result in search_response.results:
+                results.append({
+                    "id": str(result.memory_unit.id),
+                    "title": result.memory_unit.title,
+                    "summary": result.memory_unit.summary,
+                    "relevance_score": result.relevance_score,
+                    "memory_type": result.memory_unit.unit_type.value,
+                    "keywords": result.memory_unit.keywords,
+                    "created_at": result.memory_unit.created_at.isoformat(),
+                    "match_type": result.match_type,
+                    "matched_keywords": result.matched_keywords
+                })
+            
+            response_data = {
+                "success": True,
+                "query": query_text,
+                "results": results,
+                "total_found": search_response.total_count,
+                "search_time_ms": search_response.search_time_ms,
+                "metadata": search_response.metadata
+            }
+            
+            return [TextContent(
+                type="text",
+                text=json.dumps(response_data, ensure_ascii=False, indent=2)
+            )]
         
-        # 格式化结果
-        results = []
-        for result in search_response.results:
-            results.append({
-                "id": str(result.memory_unit.id),
-                "title": result.memory_unit.title,
-                "summary": result.memory_unit.summary,
-                "relevance_score": result.relevance_score,
-                "memory_type": result.memory_unit.unit_type.value,
-                "keywords": result.memory_unit.keywords,
-                "created_at": result.memory_unit.created_at.isoformat(),
-                "match_type": result.match_type,
-                "matched_keywords": result.matched_keywords
-            })
-        
-        response_data = {
-            "success": True,
-            "query": query_text,
-            "results": results,
-            "total_found": search_response.total_count,
-            "search_time_ms": search_response.search_time_ms,
-            "metadata": search_response.metadata
-        }
-        
+        # 如果都失败了
         return [TextContent(
             type="text",
-            text=json.dumps(response_data, ensure_ascii=False, indent=2)
+            text=json.dumps({
+                "success": False,
+                "error": "Both API Server and ServiceManager are unavailable"
+            }, ensure_ascii=False, indent=2)
         )]
 
     async def _handle_inject(self, arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -378,45 +537,82 @@ class ClaudeMemoryMCPServer:
         original_prompt = arguments.get("original_prompt", "")
         query_text = arguments.get("query_text")
         context_hint = arguments.get("context_hint")
-        injection_mode = arguments.get("injection_mode", "balanced")
-        max_tokens = arguments.get("max_tokens", 2000)
+        injection_mode = arguments.get("injection_mode", "comprehensive")  # 始终使用最大模式
+        max_tokens = arguments.get("max_tokens", 999999)  # 无限制
+        # project_id = os.getenv("CLAUDE_MEMORY_PROJECT_ID", "global")  # 已删除：全局共享记忆
         
-        # 构建注入请求
-        injection_request = ContextInjectionRequest(
-            original_prompt=original_prompt,
-            query_text=query_text,
-            context_hint=context_hint,
-            injection_mode=injection_mode,
-            max_tokens=max_tokens
-        )
+        try:
+            # 优先使用API Server
+            if self.http_client:
+                request_data = {
+                    "original_prompt": original_prompt,
+                    "query_text": query_text,
+                    "context_hint": context_hint,
+                    "injection_mode": injection_mode,
+                    "max_tokens": max_tokens,
+                    # "project_id": project_id  # 已删除：全局共享记忆
+                }
+                
+                response = await self.http_client.post("/memory/inject", json=request_data)
+                
+                if response.status_code == 200:
+                    response_data = response.json()
+                    return [TextContent(
+                        type="text",
+                        text=json.dumps(response_data, ensure_ascii=False, indent=2)
+                    )]
+                else:
+                    logger.warning(f"API Server returned {response.status_code}, falling back to ServiceManager")
+        except Exception as e:
+            logger.warning(f"Failed to call API Server: {e}, falling back to ServiceManager")
         
-        # 执行上下文注入
-        injection_response = await self.service_manager.inject_context(injection_request)
+        # 回退到直接使用ServiceManager
+        if self.service_manager:
+            # 构建注入请求 - 无限制模式
+            injection_request = ContextInjectionRequest(
+                original_prompt=original_prompt,
+                query_text=query_text or original_prompt,  # 如果没有query_text就使用original_prompt
+                context_hint=context_hint,
+                injection_mode="comprehensive",  # 强制使用最大模式
+                max_tokens=999999  # 无限制
+            )
+            
+            # 执行上下文注入
+            injection_response = await self.service_manager.inject_context(injection_request)
+            
+            # 格式化结果
+            injected_memories = []
+            for memory in injection_response.injected_memories:
+                injected_memories.append({
+                    "id": str(memory.id),
+                    "title": memory.title,
+                    "summary": memory.summary,
+                    "memory_type": memory.unit_type.value,
+                    "keywords": memory.keywords,
+                    "created_at": memory.created_at.isoformat()
+                })
+            
+            response_data = {
+                "success": True,
+                "enhanced_prompt": injection_response.enhanced_prompt,
+                "injected_memories": injected_memories,
+                "tokens_used": injection_response.tokens_used,
+                "processing_time_ms": injection_response.processing_time_ms,
+                "metadata": injection_response.metadata
+            }
+            
+            return [TextContent(
+                type="text",
+                text=json.dumps(response_data, ensure_ascii=False, indent=2)
+            )]
         
-        # 格式化结果
-        injected_memories = []
-        for memory in injection_response.injected_memories:
-            injected_memories.append({
-                "id": str(memory.id),
-                "title": memory.title,
-                "summary": memory.summary,
-                "memory_type": memory.unit_type.value,
-                "keywords": memory.keywords,
-                "created_at": memory.created_at.isoformat()
-            })
-        
-        response_data = {
-            "success": True,
-            "enhanced_prompt": injection_response.enhanced_prompt,
-            "injected_memories": injected_memories,
-            "tokens_used": injection_response.tokens_used,
-            "processing_time_ms": injection_response.processing_time_ms,
-            "metadata": injection_response.metadata
-        }
-        
+        # 如果都失败了
         return [TextContent(
             type="text",
-            text=json.dumps(response_data, ensure_ascii=False, indent=2)
+            text=json.dumps({
+                "success": False,
+                "error": "Both API Server and ServiceManager are unavailable"
+            }, ensure_ascii=False, indent=2)
         )]
 
     async def _handle_status(self, arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -526,13 +722,68 @@ class ClaudeMemoryMCPServer:
             text=json.dumps(response_data, ensure_ascii=False, indent=2)
         )]
 
+    async def _handle_cross_project_search(self, arguments: Dict[str, Any]) -> Sequence[TextContent]:
+        """
+        处理跨项目搜索 - 已删除：全局共享记忆，不需要项目隔离
+        改为直接使用全局搜索
+        """
+        query_text = arguments.get("query", "")
+        limit = arguments.get("limit", 20)
+        min_score = arguments.get("min_score", 0.5)
+        
+        # 构建搜索查询（全局搜索）
+        search_query = SearchQuery(
+            query=query_text,
+            query_type="hybrid",
+            limit=limit,
+            min_score=min_score,
+            context=""
+        )
+        
+        # 执行全局搜索（替代跨项目搜索）
+        search_response = await self.service_manager.search_memories(search_query)
+        
+        # 格式化结果
+        results = []
+        for result in search_response.results:
+            results.append({
+                "id": str(result.memory_unit.id),
+                "title": result.memory_unit.title,
+                "summary": result.memory_unit.summary,
+                "relevance_score": result.relevance_score,
+                "memory_type": result.memory_unit.unit_type.value,
+                "keywords": result.memory_unit.keywords,
+                "created_at": result.memory_unit.created_at.isoformat(),
+                "match_type": result.match_type,
+                "matched_keywords": result.matched_keywords,
+                # "project_id": result.metadata.get("project_id", "global"),  # 已删除：全局共享记忆
+                # "project_name": result.metadata.get("project_name", "Global")  # 已删除：全局共享记忆
+            })
+        
+        response_data = {
+            "success": True,
+            "query": query_text,
+            "results": results,
+            "total_found": search_response.total_count,
+            # "projects_searched": search_response.projects_searched,  # 已删除：全局共享记忆
+            # "project_stats": project_stats,  # 已删除：全局共享记忆
+            "search_time_ms": search_response.search_time_ms,
+            # "merge_strategy": merge_strategy,  # 已删除：全局共享记忆
+            "metadata": search_response.metadata
+        }
+        
+        return [TextContent(
+            type="text",
+            text=json.dumps(response_data, ensure_ascii=False, indent=2)
+        )]
+
 
 async def main():
     """
     主入口函数
     """
-    # 设置日志级别
-    logging.basicConfig(level=logging.INFO)
+    # 重定向stderr到日志文件，避免干扰stdio通信
+    sys.stderr = StderrToLogger(logger)
     
     # 创建MCP服务器
     mcp_server = ClaudeMemoryMCPServer()
@@ -556,7 +807,7 @@ async def main():
             await mcp_server.server.run(
                 read_stream,
                 write_stream,
-                InitializationOptions()
+                init_options
             )
             
     except KeyboardInterrupt:

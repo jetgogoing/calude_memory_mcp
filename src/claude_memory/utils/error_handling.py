@@ -106,6 +106,11 @@ class ServiceError(RetryableError):
     pass
 
 
+class SecurityError(NonRetryableError):
+    """安全错误 - 权限验证失败等"""
+    pass
+
+
 class ErrorTracker:
     """错误追踪器 - 记录和分析错误模式"""
     
