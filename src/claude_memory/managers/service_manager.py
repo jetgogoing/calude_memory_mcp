@@ -33,14 +33,6 @@ from claude_memory.collectors.conversation_collector import ConversationCollecto
 from claude_memory.processors.semantic_compressor import SemanticCompressor, CompressionRequest
 from claude_memory.retrievers.semantic_retriever import SemanticRetriever, RetrievalRequest
 from claude_memory.injectors.context_injector import ContextInjector
-# 删除跨项目搜索 - 全局共享记忆，不需要项目隔离
-# from claude_memory.managers.cross_project_search import (
-#     CrossProjectSearchManager,
-#     CrossProjectSearchRequest,
-#     CrossProjectSearchResponse,
-#     get_cross_project_search_manager,
-# )
-# from claude_memory.managers.project_manager import ProjectManager  # 删除项目管理器
 from claude_memory.utils.error_handling import (
     handle_exceptions,
     ProcessingError,
