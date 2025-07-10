@@ -15,7 +15,7 @@ import structlog
 from pydantic import BaseModel, Field
 
 from ..models.data_models import (
-    MemoryUnit,
+    MemoryUnitModel,
     MemoryUnitType,
 )
 from ..config.settings import get_settings
@@ -24,7 +24,7 @@ from ..fusers.memory_fuser import MemoryFuser, FusionConfig
 from ..builders.prompt_builder import PromptBuilder, BuilderConfig
 from ..limiters.token_limiter import TokenLimiter, LimiterConfig, PriorityLevel
 from ..utils.model_manager import ModelManager
-from ..utils.cost_tracker import CostTracker
+# from ..utils.cost_tracker import CostTracker  # 已删除
 from ..utils.token_counter import TokenCounter
 
 logger = structlog.get_logger(__name__)
@@ -71,12 +71,12 @@ class ContextInjectorV13:
         self,
         retriever: SemanticRetriever,
         model_manager: ModelManager,
-        cost_tracker: Optional[CostTracker] = None
+        # cost_tracker: Optional[CostTracker] = None  # 已删除
     ):
         self.settings = get_settings()
         self.retriever = retriever
         self.model_manager = model_manager
-        self.cost_tracker = cost_tracker or CostTracker()
+        # self.cost_tracker = cost_tracker or CostTracker()  # 已删除
         self.token_counter = TokenCounter()
         
         # 初始化子组件
@@ -102,7 +102,7 @@ class ContextInjectorV13:
         self.fuser = MemoryFuser(
             config=fusion_config,
             model_manager=self.model_manager,
-            cost_tracker=self.cost_tracker
+            # cost_tracker=self.cost_tracker  # 已删除
         )
         
         # 构建器配置
@@ -234,7 +234,7 @@ class ContextInjectorV13:
         query: str,
         conversation_id: str,
         strategy: str
-    ) -> List[MemoryUnit]:
+    ) -> List[MemoryUnitModel]:
         """检索相关记忆 (v1.4: 固定Top-20→Top-5策略)"""
         # v1.4: 固定使用Top-20初检，后续通过rerank返回Top-5
         top_k = self.settings.memory.retrieval_top_k  # 固定为20
@@ -248,7 +248,7 @@ class ContextInjectorV13:
             } if conversation_id else None
         )
         
-        # 转换为MemoryUnit列表
+        # 转换为MemoryUnitModel列表
         memory_units = []
         for result in search_results:
             if hasattr(result, "memory_unit"):
@@ -267,7 +267,7 @@ class ContextInjectorV13:
     def _should_fuse(
         self,
         request: InjectionRequest,
-        memory_units: List[MemoryUnit]
+        memory_units: List[MemoryUnitModel]
     ) -> bool:
         """判断是否需要融合 (v1.4: 直接读取环境变量配置)"""
         # v1.4: 简化逻辑，直接通过环境变量控制
@@ -324,11 +324,11 @@ class ContextInjectorV13:
             
             # 记录成本
             usage = response.get("usage", {})
-            cost = self.cost_tracker.calculate_cost(
-                self.settings.memory.summary_model,
-                usage.get("prompt_tokens", 0),
-                usage.get("completion_tokens", 0)
-            )
+            # cost = self.cost_tracker.calculate_cost(  # 已删除
+            #     self.settings.memory.summary_model,
+            #     usage.get("prompt_tokens", 0),
+            #     usage.get("completion_tokens", 0)
+            # )
             
             logger.info(
                 "manual_review_completed",
@@ -349,7 +349,7 @@ class ContextInjectorV13:
     
     def _format_memories_for_summary(
         self,
-        memories: List[MemoryUnit]
+        memories: List[MemoryUnitModel]
     ) -> str:
         """格式化记忆用于总结"""
         formatted = []
@@ -371,16 +371,16 @@ class ContextInjectorV13:
             "mode": self.settings.memory.default_memory_mode,
             "fuser_enabled": self.settings.memory.fuser_enabled,
             "fuser_stats": self.fuser.get_stats(),
-            "total_cost": self.cost_tracker.get_total_cost(),
-            "daily_cost_estimate": self.cost_tracker.get_daily_estimate()
+            # "total_cost": self.cost_tracker.get_total_cost(),  # 已删除
+            # "daily_cost_estimate": self.cost_tracker.get_daily_estimate()  # 已删除
         }
         
-        # 检查是否接近预算限制
-        if stats["daily_cost_estimate"] > self.settings.cost.daily_budget_usd * 0.8:
-            stats["budget_warning"] = True
-            stats["budget_usage_percent"] = (
-                stats["daily_cost_estimate"] / 
-                self.settings.cost.daily_budget_usd * 100
-            )
+        # 检查是否接近预算限制 - 已删除
+        # if stats["daily_cost_estimate"] > self.settings.cost.daily_budget_usd * 0.8:
+        #     stats["budget_warning"] = True
+        #     stats["budget_usage_percent"] = (
+        #         stats["daily_cost_estimate"] / 
+        #         self.settings.cost.daily_budget_usd * 100
+        #     )
         
         return stats

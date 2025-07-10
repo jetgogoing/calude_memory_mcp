@@ -79,7 +79,7 @@ class ConversationModel(BaseModel):
     """对话模型"""
     
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    # project_id: str = Field(default="default", description="项目ID")  # 已删除：全局共享记忆
+    project_id: str = Field(default="global", description="项目ID，使用global实现跨项目共享")
     session_id: Optional[str] = None
     title: str = ""
     messages: List[MessageModel] = []
@@ -97,7 +97,7 @@ class MemoryUnitModel(BaseModel):
     """记忆单元模型"""
     
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="memory_id")
-    # project_id: str = Field(default="default", description="项目ID")  # 已删除：全局共享记忆
+    project_id: str = Field(default="global", description="项目ID，使用global实现跨项目共享")
     conversation_id: str
     unit_type: MemoryUnitType
     title: str
@@ -237,7 +237,7 @@ class ConversationDB(Base):
     __tablename__ = "conversations"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    # project_id = Column(String(255), nullable=False, default="default")  # 已删除：全局共享记忆
+    project_id = Column(String(255), nullable=False, default="global")
     session_id = Column(String(255), nullable=True)
     title = Column(String(500), nullable=False, default="")
     started_at = Column(DateTime, nullable=False, default=datetime.utcnow)
@@ -256,8 +256,8 @@ class ConversationDB(Base):
     __table_args__ = (
         Index("idx_conversations_session_id", "session_id"),
         Index("idx_conversations_started_at", "started_at"),
-        # Index("idx_conversations_project_id", "project_id"),  # 已删除：项目ID索引
-        # Index("idx_conversations_project_started", "project_id", "started_at"),  # 已删除：复合索引
+        Index("idx_conversations_project_id", "project_id"),
+        Index("idx_conversations_project_started", "project_id", "started_at"),
     )
 
 
@@ -292,7 +292,7 @@ class MemoryUnitDB(Base):
     __tablename__ = "memory_units"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    # project_id = Column(String(255), nullable=False, default="default")  # 已删除：全局共享记忆
+    project_id = Column(String(255), nullable=False, default="global")
     conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False)
     unit_type = Column(String(50), nullable=False)
     title = Column(String(500), nullable=False)
@@ -317,8 +317,8 @@ class MemoryUnitDB(Base):
         Index("idx_memory_units_type", "unit_type"),
         Index("idx_memory_units_created_at", "created_at"),
         Index("idx_memory_units_active", "is_active"),
-        # Index("idx_memory_units_project_id", "project_id"),  # 已删除：项目ID索引
-        # Index("idx_memory_units_project_type_created", "project_id", "unit_type", "created_at"),  # 已删除：复合索引
+        Index("idx_memory_units_project_id", "project_id"),
+        Index("idx_memory_units_project_type_created", "project_id", "unit_type", "created_at"),
     )
 
 

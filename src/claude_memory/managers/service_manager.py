@@ -921,10 +921,10 @@ class ServiceManager:
             raise ServiceError("SemanticRetriever not initialized")
         
         try:
-            # 构建检索请求（全局共享记忆，无project_id）
+            # 构建检索请求（全局共享记忆，使用project_id="global"）
             retrieval_request = RetrievalRequest(
                 query=query,
-                # project_id=actual_project_id,  # 已删除：全局共享记忆
+                project_id="global",  # 使用全局project_id实现共享
                 limit=query.limit or 10,
                 min_score=query.min_score or 0.3,  # 降低默认评分阈值
                 rerank=True,

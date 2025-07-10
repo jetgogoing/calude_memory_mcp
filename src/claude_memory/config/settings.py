@@ -123,11 +123,17 @@ class MemorySettings(BaseSettings):
     max_context_tokens: int = Field(default=999999, ge=500)
     emergency_token_limit: int = Field(default=999999, ge=100)
     
-    # 检索配置 (v1.4: 固定Top-20→Top-5策略)
-    retrieval_top_k: int = Field(default=20, ge=1, le=100, description="初始检索数量，固定为20")
-    rerank_top_k: int = Field(default=5, ge=1, le=20, description="重排序后返回数量，固定为5")
-    similarity_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    # 检索配置 (优化：大幅提升信息量)
+    retrieval_top_k: int = Field(default=100, ge=1, le=500, description="初始检索数量，提升到100")
+    rerank_top_k: int = Field(default=30, ge=1, le=100, description="重排序后返回数量，提升到30")
+    similarity_threshold: float = Field(default=0.2, ge=0.0, le=1.0)
     hybrid_search_alpha: float = Field(default=0.5, ge=0.0, le=1.0)
+    
+    # Reranker配置 (v1.4: AI重排序)
+    rerank_enabled: bool = Field(default=True, description="是否启用AI重排序")
+    rerank_model: str = Field(default="Qwen/Qwen3-Reranker-8B", description="重排序模型")
+    rerank_timeout: int = Field(default=10, ge=1, le=30, description="重排序超时时间(秒)")
+    rerank_fallback_enabled: bool = Field(default=True, description="是否启用降级策略")
     
 
 

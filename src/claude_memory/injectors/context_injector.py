@@ -149,7 +149,7 @@ class ContextInjector:
             # 检索相关记忆 - 获取所有相关记忆
             retrieval_request = RetrievalRequest(
                 query=search_query,
-                limit=999999,  # 获取所有记忆
+                limit=100,  # API 限制最大 100
                 min_score=0.0,  # 接受所有记忆
                 unit_types=strategy.include_types,
                 rerank=True,
@@ -267,7 +267,7 @@ class ContextInjector:
             if keyword_overlap < 0.7:  # 允许30%以下的重叠
                 selected_memories.append(candidate)
                 used_keywords.update(memory_keywords)
-                token_count += memory_tokens
+                token_count += candidate.memory_unit.token_count
         
         # 按记忆类型重新排序：Global > Quick > Archive
         type_priority = {

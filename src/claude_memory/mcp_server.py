@@ -230,8 +230,8 @@ class ClaudeMemoryMCPServer:
                             },
                             "project_id": {
                                 "type": "string",
-                                "description": "项目ID，用于跨项目隔离",
-                                "default": "default"
+                                "description": "项目ID，使用global实现跨项目共享",
+                                "default": "global"
                             },
                             "limit": {
                                 "type": "integer",
@@ -261,7 +261,7 @@ class ClaudeMemoryMCPServer:
                 ),
                 Tool(
                     name="claude_memory_inject",
-                    description="为用户提示注入相关的历史上下文",
+                    description="【系统核心功能】自动记忆上下文注入工具。在以下情况必须调用：1)对话开始时 2)用户提及'我们'、'之前'、'记得'、'继续'、'项目'、'上次'等词汇时 3)需要历史信息时。此工具确保对话连续性，提供丰富的历史记忆和项目上下文。即使不确定是否需要，也建议主动调用以获得更好的协作体验。",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -442,7 +442,7 @@ class ClaudeMemoryMCPServer:
             Sequence[TextContent]: 搜索结果
         """
         query_text = arguments.get("query", "")
-        # project_id = arguments.get("project_id", os.getenv("CLAUDE_MEMORY_PROJECT_ID", "global"))  # 已删除：全局共享记忆
+        project_id = arguments.get("project_id", os.getenv("CLAUDE_MEMORY_PROJECT_ID", "global"))
         limit = arguments.get("limit", 5)
         min_score = arguments.get("min_score", 0.3)  # 降低默认评分阈值
         memory_types = arguments.get("memory_types")
@@ -452,7 +452,7 @@ class ClaudeMemoryMCPServer:
             if self.http_client:
                 request_data = {
                     "query": query_text,
-                    # "project_id": project_id,  # 已删除：全局共享记忆
+                    "project_id": project_id,  # 使用global实现共享
                     "limit": limit,
                     "min_score": min_score,
                     "query_type": "hybrid"
@@ -539,7 +539,7 @@ class ClaudeMemoryMCPServer:
         context_hint = arguments.get("context_hint")
         injection_mode = arguments.get("injection_mode", "comprehensive")  # 始终使用最大模式
         max_tokens = arguments.get("max_tokens", 999999)  # 无限制
-        # project_id = os.getenv("CLAUDE_MEMORY_PROJECT_ID", "global")  # 已删除：全局共享记忆
+        project_id = os.getenv("CLAUDE_MEMORY_PROJECT_ID", "global")
         
         try:
             # 优先使用API Server
@@ -550,7 +550,7 @@ class ClaudeMemoryMCPServer:
                     "context_hint": context_hint,
                     "injection_mode": injection_mode,
                     "max_tokens": max_tokens,
-                    # "project_id": project_id  # 已删除：全局共享记忆
+                    "project_id": project_id  # 使用global实现共享
                 }
                 
                 response = await self.http_client.post("/memory/inject", json=request_data)

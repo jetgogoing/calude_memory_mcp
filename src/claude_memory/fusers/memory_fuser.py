@@ -15,9 +15,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import structlog
 from pydantic import BaseModel, Field
 
-from ..models.data_models import MemoryUnit
+from ..models.data_models import MemoryUnitModel
 from ..utils.model_manager import ModelManager
-from ..utils.cost_tracker import CostTracker
+# from ..utils.cost_tracker import CostTracker  # Module not found
 from ..utils.token_counter import TokenCounter
 
 logger = structlog.get_logger()
@@ -30,7 +30,7 @@ class FusionConfig(BaseModel):
     model: str = Field(default="gemini-2.5-flash", description="融合模型")
     temperature: float = Field(default=0.2, description="生成温度")
     prompt_template_path: str = Field(
-        default="./prompts/memory_fusion_prompt_programming.txt",
+        default="./prompts/MiniLLM_Memory_Prompt_Template_v3.md",
         description="提示模板路径"
     )
     token_limit: int = Field(default=800, description="输出token限制")
@@ -57,11 +57,11 @@ class MemoryFuser:
         self,
         config: FusionConfig,
         model_manager: ModelManager,
-        cost_tracker: Optional[CostTracker] = None
+        cost_tracker: Optional[Any] = None
     ):
         self.config = config
         self.model_manager = model_manager
-        self.cost_tracker = cost_tracker or CostTracker()
+        self.cost_tracker = cost_tracker  # CostTracker module not available
         self.token_counter = TokenCounter()
         self._cache: Dict[str, FusedMemory] = {}
         self._prompt_template: Optional[str] = None
@@ -134,7 +134,7 @@ class MemoryFuser:
     
     async def fuse_memories(
         self,
-        memory_units: List[MemoryUnit],
+        memory_units: List[MemoryUnitModel],
         query: str,
         max_tokens: Optional[int] = None
     ) -> FusedMemory:
@@ -182,7 +182,7 @@ class MemoryFuser:
     
     async def _perform_fusion(
         self,
-        memory_units: List[MemoryUnit],
+        memory_units: List[MemoryUnitModel],
         query: str,
         max_tokens: int
     ) -> FusedMemory:
@@ -204,15 +204,11 @@ class MemoryFuser:
                 max_tokens=max_tokens
             )
             
-            content = response.get("content", "")
+            content = response.content if hasattr(response, 'content') else str(response)
             
             # 计算成本
-            usage = response.get("usage", {})
-            cost = self.cost_tracker.calculate_cost(
-                self.config.model,
-                usage.get("prompt_tokens", 0),
-                usage.get("completion_tokens", 0)
-            )
+            usage = response.usage if hasattr(response, 'usage') else {}
+            cost = response.cost_usd if hasattr(response, 'cost_usd') else 0.0
             
             # 统计token
             token_count = self.token_counter.count_tokens(content)
@@ -235,7 +231,7 @@ class MemoryFuser:
                     "fusion_time": elapsed_time,
                     "input_count": len(memory_units)
                 },
-                source_units=[unit.memory_id for unit in memory_units],
+                source_units=[unit.id for unit in memory_units],
                 token_count=token_count,
                 fusion_model=self.config.model,
                 fusion_cost=cost
@@ -249,13 +245,13 @@ class MemoryFuser:
             )
             raise
     
-    def _prepare_fragments(self, memory_units: List[MemoryUnit]) -> str:
+    def _prepare_fragments(self, memory_units: List[MemoryUnitModel]) -> str:
         """准备记忆片段"""
         fragments = []
         
         for i, unit in enumerate(memory_units):
             fragment = f"<fragment_{i:02d}>\n"
-            fragment += f"Time: {unit.timestamp}\n"
+            fragment += f"Time: {unit.created_at}\n"
             fragment += f"Type: {unit.unit_type}\n"
             
             if unit.metadata:
@@ -287,12 +283,12 @@ class MemoryFuser:
         
         return prompt
     
-    def _simple_concatenate(self, memory_units: List[MemoryUnit]) -> FusedMemory:
+    def _simple_concatenate(self, memory_units: List[MemoryUnitModel]) -> FusedMemory:
         """简单拼接记忆单元"""
         contents = []
         
         for unit in memory_units:
-            content = f"[{unit.timestamp}] {unit.unit_type}:\n{unit.content}\n"
+            content = f"[{unit.created_at}] {unit.unit_type}:\n{unit.content}\n"
             contents.append(content)
         
         combined = "\n---\n".join(contents)
@@ -301,7 +297,7 @@ class MemoryFuser:
         return FusedMemory(
             content=combined,
             metadata={"fusion_method": "simple_concatenation"},
-            source_units=[unit.memory_id for unit in memory_units],
+            source_units=[unit.id for unit in memory_units],
             token_count=token_count,
             fusion_model="none",
             fusion_cost=0.0
@@ -309,12 +305,12 @@ class MemoryFuser:
     
     def _generate_cache_key(
         self,
-        memory_units: List[MemoryUnit],
+        memory_units: List[MemoryUnitModel],
         query: str
     ) -> str:
         """生成缓存键"""
         # 使用记忆单元ID和查询生成唯一键
-        unit_ids = sorted([unit.memory_id for unit in memory_units])
+        unit_ids = sorted([unit.id for unit in memory_units])
         key_str = f"{query}:{':'.join(unit_ids)}"
         return hashlib.sha256(key_str.encode()).hexdigest()[:16]
     

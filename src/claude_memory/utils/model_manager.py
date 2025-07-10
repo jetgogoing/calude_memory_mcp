@@ -87,6 +87,14 @@ class ModelManager:
             }
         }
         
+        # 调试: 检查API key是否加载
+        logger.info(
+            "API keys status",
+            gemini_configured=bool(self.providers['gemini']['api_key']),
+            openrouter_configured=bool(self.providers['openrouter']['api_key']),
+            siliconflow_configured=bool(self.providers['siliconflow']['api_key'])
+        )
+        
         # 模型映射
         self.model_provider_map = {
             # Gemini models

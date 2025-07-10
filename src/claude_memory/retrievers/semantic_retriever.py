@@ -45,9 +45,9 @@ class RetrievalRequest(BaseModel):
     """检索请求模型"""
     
     query: SearchQuery
-    # project_id: str = Field(default="default", description="项目ID")  # 已删除：全局共享记忆
-    limit: int = Field(default=10, ge=1, le=999999)  # 移除上限限制
-    min_score: float = Field(default=0.3, ge=0.0, le=1.0)
+    project_id: str = Field(default="global", description="项目ID，默认为global实现全局共享")
+    limit: int = Field(default=50, ge=1, le=999999)  # 提升默认限制到50
+    min_score: float = Field(default=0.2, ge=0.0, le=1.0)  # 降低相关性阈值
     include_expired: bool = False
     unit_types: Optional[List[MemoryUnitType]] = None
     rerank: bool = True
@@ -499,8 +499,9 @@ class SemanticRetriever:
             from claude_memory.models.data_models import MemoryUnitDB
             query = select(MemoryUnitDB)
             
-            # 项目ID过滤 - 始终添加
-            # query = query.filter(MemoryUnitDB.project_id == request.project_id)  # 已删除：全局共享记忆
+            # 项目ID过滤 - 支持全局共享
+            # 对于全局共享模式，总是查询project_id="global"的记忆
+            query = query.filter(MemoryUnitDB.project_id == "global")
             
             # 关键词匹配条件 - 修复JSON查询问题
             keyword_conditions = []
@@ -559,7 +560,7 @@ class SemanticRetriever:
                 # 转换MemoryUnitDB为MemoryUnitModel
                 memory_unit_model = MemoryUnitModel(
                     memory_id=str(memory_unit.id),
-                    # project_id=memory_unit.project_id,  # 已删除：全局共享记忆
+                    project_id=memory_unit.project_id,
                     conversation_id=str(memory_unit.conversation_id),
                     unit_type=memory_unit.unit_type,
                     title=memory_unit.title,
@@ -668,7 +669,7 @@ class SemanticRetriever:
                 return reranked_results[:self.settings.memory.rerank_top_k]
                 
             finally:
-                await model_manager.close()
+                await self.model_manager.close()
                 
         except Exception as e:
             logger.warning(
@@ -937,7 +938,7 @@ class SemanticRetriever:
                     # 转换为 Pydantic 模型
                     return MemoryUnitModel(
                         id=str(memory_unit_db.id),
-                        # project_id=memory_unit_db.project_id,  # 已删除：全局共享记忆
+                        project_id=memory_unit_db.project_id,
                         conversation_id=str(memory_unit_db.conversation_id),
                         unit_type=memory_unit_db.unit_type,
                         title=memory_unit_db.title,

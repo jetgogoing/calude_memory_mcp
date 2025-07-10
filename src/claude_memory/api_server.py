@@ -33,14 +33,14 @@ settings = Settings()
 class MemoryStoreRequest(BaseModel):
     """存储记忆请求"""
     content: str
-    project_id: str = "default"
+    project_id: str = "global"
     metadata: Dict[str, Any] = {}
 
 
 class MemorySearchRequest(BaseModel):
     """搜索记忆请求"""
     query: str
-    project_id: str = "default"
+    project_id: str = "global"
     limit: int = 5
     min_score: float = 0.3
 
@@ -48,7 +48,7 @@ class MemorySearchRequest(BaseModel):
 class ConversationRequest(BaseModel):
     """对话请求"""
     messages: list
-    project_id: str = "default"
+    project_id: str = "global"
     title: str = None
 
 
@@ -59,7 +59,7 @@ class MemoryInjectRequest(BaseModel):
     context_hint: Optional[str] = None
     injection_mode: str = "balanced"
     max_tokens: int = 2000
-    project_id: str = "default"
+    project_id: str = "global"
 
 
 @asynccontextmanager
@@ -134,7 +134,6 @@ async def store_memory(request: MemoryStoreRequest):
         return {
             "success": True,
             "conversation_id": conversation.id,
-            "project_id": conversation.project_id,
             "message": "Memory stored successfully"
         }
         
@@ -226,7 +225,6 @@ async def store_conversation(request: ConversationRequest):
         return {
             "success": True,
             "conversation_id": conversation.id,
-            "project_id": conversation.project_id,
             "message": "Conversation stored successfully"
         }
         

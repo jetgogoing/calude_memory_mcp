@@ -82,8 +82,72 @@ snapshots/
 reports/*.json
 reports/*.md
 
+# Development notes and execution reports
+docs/
+
 # Migration files
 migration_progress_v14.json
 
 # Service files (contain sensitive paths)
 *.service
+
+# User memory and conversation data
+# PostgreSQL data volumes
+postgres_data/
+pg_data/
+postgresql_data/
+
+# Qdrant vector database
+qdrant_data/
+qdrant_storage/
+
+# Claude CLI logs and conversations
+~/.claude/
+.claude/logs/
+.claude/conversations/
+claude_memory_injection.log
+
+# Local memory databases
+*.db
+*.sqlite
+*.sqlite3
+memory.db
+conversations.db
+claude_memory.db
+
+# Memory exports and backups
+memory_exports/
+memory_backups/
+*.memory.json
+*.conversation.json
+
+# API logs containing user queries
+api_server*.log
+memory_retrieval*.log
+
+# Test data that might contain real conversations
+test_conversations/
+test_memories/
+test_data/
+
+# Scripts that may contain user data or test conversations
+scripts/*memory*.py
+scripts/*inject*.py
+scripts/*conversation*.py
+scripts/test_*.py
+
+# Claude user data from home directory
+~/.claude/
+
+# Session and temporary files
+session_*.json
+temp_conversation_*.json
+*.session
+
+# Docker volumes
+docker_volumes/
+volumes/
+
+# Claude instructions
+CLAUDE.md
+CLAUDE.local.md
