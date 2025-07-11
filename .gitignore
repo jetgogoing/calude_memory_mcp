@@ -143,6 +143,7 @@ scripts/test_*.py
 session_*.json
 temp_conversation_*.json
 *.session
+*.pid
 
 # Docker volumes
 docker_volumes/

@@ -1,0 +1,3 @@
+#!/bin/bash
+# Claude Memory Auto Save Wrapper
+exec /home/jetgogoing/claude_memory/scripts/claude_memory_auto_save.py "$@"
